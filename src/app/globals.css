@@ -1,26 +1,127 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+/* ------------------------------------------------------------------
+   KidsCare design tokens
+   Playful but not childish: warm coral primary, mint + sunshine accents,
+   deep ink for type. Mirrors the RN app's role structure (primary /
+   surface / muted) so both clients stay visually related.
+------------------------------------------------------------------- */
+@theme {
+  --color-brand-50: #fff1f0;
+  --color-brand-100: #ffe0dd;
+  --color-brand-200: #ffc4bf;
+  --color-brand-300: #ff9c93;
+  --color-brand-400: #ff6f63;
+  --color-brand-500: #f74d3f;
+  --color-brand-600: #e0341f;
+  --color-brand-700: #bb2718;
+  --color-brand-800: #9a2418;
+  --color-brand-900: #7f231a;
+
+  --color-mint-50: #eefdf5;
+  --color-mint-100: #d5fae7;
+  --color-mint-200: #aef3d2;
+  --color-mint-300: #74e7b4;
+  --color-mint-400: #38d391;
+  --color-mint-500: #14b975;
+  --color-mint-600: #08945e;
+  --color-mint-700: #08764e;
+
+  --color-sun-100: #fff5d6;
+  --color-sun-200: #ffe9a8;
+  --color-sun-300: #ffd863;
+  --color-sun-400: #ffc531;
+  --color-sun-500: #f5a800;
+
+  --color-grape-100: #f1ecff;
+  --color-grape-300: #bda6ff;
+  --color-grape-500: #7c53f5;
+  --color-grape-600: #6535e0;
+
+  --color-sky-ks: #34a6e8;
+  --color-ink: #17202e;
+  --color-ink-soft: #4a5568;
+  --color-ink-muted: #7c8798;
+  --color-cream: #fffaf6;
+  --color-line: #ecebe8;
+
+  --font-display: var(--font-baloo), "Trebuchet MS", system-ui, sans-serif;
+  --font-sans: var(--font-nunito), ui-sans-serif, system-ui, sans-serif;
+
+  --radius-card: 1.25rem;
+
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-float: float 6s ease-in-out infinite;
+  --animate-marquee: marquee 28s linear infinite;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+@keyframes marquee {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-cream);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Shimmer block used by every skeleton — ports the RN
+   ShimmerEffect (interpolated opacity sweep) to a CSS gradient sweep. */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    #ececec 25%,
+    #f7f7f7 37%,
+    #ececec 63%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Horizontal rails: scroll-snap, no visible scrollbar.
+   `proximity`, not `mandatory` — a mandatory rail keeps re-targeting the
+   scroll position while the page scrolls past it, which reads as catching. */
+.rail {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  scroll-snap-type: x proximity;
+  overscroll-behavior-x: contain;
+}
+.rail::-webkit-scrollbar {
+  display: none;
+}
+.rail > * {
+  scroll-snap-align: start;
+}
+
+/* Focus ring consistent across every interactive element. */
+:where(a, button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--color-brand-500);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
