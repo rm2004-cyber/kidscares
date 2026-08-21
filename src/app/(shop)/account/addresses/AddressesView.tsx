@@ -1,11 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Briefcase, Check, Home, MapPin, Pencil, Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/Form";
 import { useAddresses } from "@/store/useAddresses";
-import { useHydrated } from "@/lib/useHydrated";
 import type { Address } from "@/lib/account/types";
 import {
   AddressFormSheet,
@@ -17,8 +16,14 @@ import { cn } from "@/lib/utils";
 const LABEL_ICON = { Home, Work: Briefcase, Other: MapPin };
 
 export function AddressesView() {
-  const hydrated = useHydrated();
-  const { addresses, add, update, remove, setDefault } = useAddresses();
+  const { addresses, add, update, remove, setDefault, load, loaded, loading } =
+    useAddresses();
+
+  useEffect(() => {
+    if (!loaded) void load();
+  }, [loaded, load]);
+
+  const hydrated = loaded && !loading;
 
   const [sheet, setSheet] = useState<{
     open: boolean;
@@ -37,9 +42,9 @@ export function AddressesView() {
     setSheet({ open: true, id: a._id, initial: draft });
   };
 
-  const save = (v: AddressDraft) => {
-    if (sheet.id) update(sheet.id, v);
-    else add(v);
+  const save = async (v: AddressDraft) => {
+    if (sheet.id) await update(sheet.id, v);
+    else await add(v);
     setSheet((s) => ({ ...s, open: false }));
   };
 
@@ -119,7 +124,7 @@ export function AddressesView() {
                   <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-line pt-3">
                     {!a.isDefault && (
                       <button
-                        onClick={() => setDefault(a._id)}
+                        onClick={() => void setDefault(a._id)}
                         className="rounded-full border-2 border-line px-3 py-1.5 text-[11px] font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
                       >
                         Set as default
@@ -195,7 +200,7 @@ export function AddressesView() {
                   variant="danger"
                   className="flex-1"
                   onClick={() => {
-                    remove(confirmId);
+                    void remove(confirmId);
                     setConfirmId(null);
                   }}
                 >

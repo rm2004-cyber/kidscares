@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
 import { Download, ReceiptText, Search, X } from "lucide-react";
@@ -18,50 +18,80 @@ import {
 } from "@/components/admin/ui";
 import { StatusPill } from "@/components/admin/StatusPill";
 import type { Order, OrderStatus } from "@/lib/admin/types";
-import { inr } from "@/lib/data";
+import { adminApi, ApiError } from "@/utils/service";
+import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const STATUSES: OrderStatus[] = [
-  "pending", "confirmed", "packed", "shipped", "delivered", "cancelled", "returned",
+/* Only the statuses an admin may set by hand — once a parcel is shipped the
+   courier owns the status and the API rejects manual changes. */
+const SETTABLE: OrderStatus[] = ["confirmed", "packed", "shipped", "cancelled"];
+
+const FILTERS: OrderStatus[] = [
+  "placed", "confirmed", "packed", "shipped",
+  "in-transit", "out-for-delivery", "delivered", "cancelled",
 ];
 
-export function OrdersView({ orders }: { orders: Order[] }) {
-  const [rows, setRows] = useState(orders);
+export function OrdersView() {
+  const [rows, setRows] = useState<Order[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
   const [payment, setPayment] = useState<string>("");
   const [open, setOpen] = useState<Order | null>(null);
 
-  const filtered = useMemo(
-    () =>
-      rows.filter((o) => {
-        if (status && o.status !== status) return false;
-        if (payment && o.payment !== payment) return false;
-        if (q) {
-          const hay = `${o.orderNo} ${o.customer.name} ${o.customer.email} ${o.city}`.toLowerCase();
-          if (!hay.includes(q.toLowerCase())) return false;
-        }
-        return true;
-      }),
-    [rows, q, status, payment],
-  );
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await adminApi.listOrders({
+        q: q || undefined,
+        status: status || undefined,
+        payment: payment || undefined,
+        limit: 50,
+      });
+      setRows((res?.data ?? []) as Order[]);
+      setTotal(res?.meta?.total ?? 0);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load orders.");
+    } finally {
+      setLoading(false);
+    }
+  }, [q, status, payment]);
 
-  const counts = useMemo(() => {
-    const c: Record<string, number> = {};
-    for (const o of rows) c[o.status] = (c[o.status] ?? 0) + 1;
-    return c;
-  }, [rows]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const setStatusFor = (id: string, next: OrderStatus) => {
-    setRows((prev) => prev.map((o) => (o._id === id ? { ...o, status: next } : o)));
-    setOpen((o) => (o && o._id === id ? { ...o, status: next } : o));
+  const filtered = rows;
+
+  const counts: Record<string, number> = {};
+  for (const o of rows) counts[o.status] = (counts[o.status] ?? 0) + 1;
+
+  /**
+   * Marking an order "shipped" hands it to Shiprocket; after that the API
+   * refuses manual changes because courier scans own the status.
+   */
+  const setStatusFor = async (id: string, next: OrderStatus) => {
+    setError("");
+    try {
+      const res = await adminApi.updateOrderStatus(id, next);
+      if (res?.shipmentError) {
+        setError(`Status saved, but the courier handoff failed: ${res.shipmentError}`);
+      }
+      await load();
+      setOpen((o) => (o && o._id === id ? { ...o, status: next } : o));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update the status.");
+    }
   };
 
   return (
     <>
       <PageHeader
         title="Orders"
-        subtitle={`${rows.length} orders`}
+        subtitle={loading ? "Loading…" : `${total} orders`}
         actions={
           <Button variant="secondary" size="sm">
             <Download className="size-4" />
@@ -79,9 +109,9 @@ export function OrdersView({ orders }: { orders: Order[] }) {
             status === "" ? "border-ink bg-ink text-white" : "border-line bg-white text-ink-soft",
           )}
         >
-          All <span className="opacity-60">{rows.length}</span>
+          All <span className="opacity-60">{total}</span>
         </button>
-        {STATUSES.map((s) => (
+        {FILTERS.map((s) => (
           <button
             key={s}
             onClick={() => setStatus(status === s ? "" : s)}
@@ -94,6 +124,12 @@ export function OrdersView({ orders }: { orders: Order[] }) {
           </button>
         ))}
       </div>
+
+      {error && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {error}
+        </p>
+      )}
 
       <Card bodyClassName="p-3 sm:p-3" className="mb-3">
         <div className="flex flex-col gap-2 sm:flex-row">
@@ -148,11 +184,11 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                       <p className="text-[11px] text-ink-muted">{o.items.length} items</p>
                     </Td>
                     <Td>
-                      <p className="font-semibold">{o.customer.name}</p>
-                      <p className="text-[11px] text-ink-muted">{o.city}</p>
+                      <p className="font-semibold">{o.user?.name ?? "—"}</p>
+                      <p className="text-[11px] text-ink-muted">{o.address?.city ?? "—"}</p>
                     </Td>
                     <Td className="hidden text-xs text-ink-soft lg:table-cell">
-                      {new Date(o.placedAt).toLocaleDateString("en-IN", {
+                      {new Date(o.createdAt).toLocaleDateString("en-IN", {
                         day: "numeric",
                         month: "short",
                         hour: "2-digit",
@@ -160,8 +196,8 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                       })}
                     </Td>
                     <Td className="hidden sm:table-cell">
-                      <Badge tone={o.payment === "cod" ? "sun" : "mint"}>
-                        {o.payment === "cod" ? "COD" : "Prepaid"}
+                      <Badge tone={o.payment?.method === "cod" ? "sun" : "mint"}>
+                        {o.payment?.method === "cod" ? "COD" : "Prepaid"}
                       </Badge>
                     </Td>
                     <Td>
@@ -199,7 +235,7 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                 <div>
                   <h2 className="font-display text-base font-extrabold">{open.orderNo}</h2>
                   <p className="text-[11px] text-ink-muted">
-                    {new Date(open.placedAt).toLocaleString("en-IN")}
+                    {new Date(open.createdAt).toLocaleString("en-IN")}
                   </p>
                 </div>
                 <button onClick={() => setOpen(null)} aria-label="Close" className="p-1">
@@ -212,10 +248,12 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                   <p className="mb-1 text-[11px] font-bold uppercase tracking-wide text-ink-muted">
                     Customer
                   </p>
-                  <p className="text-sm font-bold">{open.customer.name}</p>
-                  <p className="text-xs text-ink-soft">{open.customer.email}</p>
-                  <p className="text-xs text-ink-soft">{open.customer.phone}</p>
-                  <p className="mt-1 text-xs text-ink-soft">{open.city}</p>
+                  <p className="text-sm font-bold">{open.user?.name ?? "—"}</p>
+                  <p className="text-xs text-ink-soft">{open.user?.email}</p>
+                  <p className="text-xs text-ink-soft">{open.user?.phone}</p>
+                  <p className="mt-1 text-xs text-ink-soft">
+                    {[open.address?.city, open.address?.state, open.address?.pincode].filter(Boolean).join(", ")}
+                  </p>
                 </div>
 
                 <div>
@@ -226,7 +264,7 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                     {open.items.map((it, i) => (
                       <li key={i} className="flex items-center gap-3">
                         <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-cream">
-                          <Image src={it.image} alt="" fill unoptimized sizes="48px" className="object-cover" />
+                          <Image src={it.image ?? ""} alt="" fill unoptimized sizes="48px" className="object-cover" />
                         </span>
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-xs font-semibold">{it.title}</p>
@@ -244,7 +282,7 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                     <span>{inr(open.total)}</span>
                   </div>
                   <p className="mt-0.5 text-[11px] text-ink-muted">
-                    {open.payment === "cod" ? "Cash on delivery" : "Paid online"}
+                    {open.payment?.method === "cod" ? "Cash on delivery" : "Paid online"}
                   </p>
                 </div>
 
@@ -253,10 +291,10 @@ export function OrdersView({ orders }: { orders: Order[] }) {
                     Update status
                   </p>
                   <div className="flex flex-wrap gap-1.5">
-                    {STATUSES.map((s) => (
+                    {SETTABLE.map((s) => (
                       <button
                         key={s}
-                        onClick={() => setStatusFor(open._id, s)}
+                        onClick={() => void setStatusFor(open._id, s)}
                         aria-pressed={open.status === s}
                         className={cn(
                           "rounded-lg border px-2.5 py-1.5 text-xs font-semibold capitalize transition",

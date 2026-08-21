@@ -5,16 +5,14 @@ import Link from "next/link";
 import { useEffect } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { Lock, Minus, PartyPopper, Plus, ShoppingBag, Trash2, X } from "lucide-react";
-import { cartTotals, lineKey, useCart } from "@/store/useCart";
+import { lineKey, useCart } from "@/store/useCart";
 import { Glyph } from "@/components/ui/Glyph";
 import { loginHref, useAuth } from "@/store/useAuth";
-import { inr } from "@/lib/data";
-
-const FREE_SHIPPING_AT = 999;
+import { inr } from "@/lib/format";
 
 export function CartDrawer() {
-  const { lines, isOpen, close, remove, setQty } = useCart();
-  const { subtotal, savings, shipping, total, count } = cartTotals(lines);
+  const { lines, totals, isOpen, close, remove, setQty } = useCart();
+  const { subtotal, savings, shipping, total, count, freeDeliveryThreshold } = totals;
   const user = useAuth((s) => s.user);
 
   useEffect(() => {
@@ -30,8 +28,9 @@ export function CartDrawer() {
     };
   }, [isOpen]);
 
-  const toFreeShipping = Math.max(0, FREE_SHIPPING_AT - subtotal);
-  const progress = Math.min(100, (subtotal / FREE_SHIPPING_AT) * 100);
+  // Threshold comes from admin Settings, not a constant in the bundle.
+  const toFreeShipping = Math.max(0, freeDeliveryThreshold - subtotal);
+  const progress = Math.min(100, (subtotal / Math.max(freeDeliveryThreshold, 1)) * 100);
 
   return (
     <AnimatePresence>
@@ -147,7 +146,7 @@ export function CartDrawer() {
                             <div className="mt-auto flex items-center justify-between pt-2">
                               <div className="flex items-center rounded-full border border-line">
                                 <button
-                                  onClick={() => setQty(key, l.qty - 1)}
+                                  onClick={() => void setQty(l, l.qty - 1)}
                                   aria-label="Decrease quantity"
                                   className="grid size-7 place-items-center"
                                 >
@@ -157,7 +156,7 @@ export function CartDrawer() {
                                   {l.qty}
                                 </span>
                                 <button
-                                  onClick={() => setQty(key, l.qty + 1)}
+                                  onClick={() => void setQty(l, l.qty + 1)}
                                   aria-label="Increase quantity"
                                   className="grid size-7 place-items-center"
                                 >
@@ -169,7 +168,7 @@ export function CartDrawer() {
                                   {inr(l.price * l.qty)}
                                 </span>
                                 <button
-                                  onClick={() => remove(key)}
+                                  onClick={() => void remove(l)}
                                   aria-label={`Remove ${l.title}`}
                                   className="text-ink-muted transition hover:text-brand-500"
                                 >

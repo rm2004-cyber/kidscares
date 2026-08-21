@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { AlertCircle, Eye, EyeOff, Loader2 } from "lucide-react";
 import { Button, Checkbox, Field, Input } from "@/components/ui/Form";
 import { useAuth } from "@/store/useAuth";
+import { authApi, ApiError } from "@/utils/service";
 import { cn } from "@/lib/utils";
 
 /**
@@ -84,7 +85,7 @@ function strengthOf(pw: string) {
 export function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
-  const signIn = useAuth((s) => s.signIn);
+  const setUser = useAuth((s) => s.setUser);
   /* Where the visitor was headed before the gate intercepted them. Relative
      paths only — an absolute URL here would be an open redirect. */
   const raw = params.get("next") ?? "/account";
@@ -96,9 +97,10 @@ export function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = id.trim();
+
     if (!EMAIL_RE.test(clean) && !PHONE_RE.test(clean.replace(/\s|-/g, ""))) {
       setError("Enter a valid email address or 10-digit mobile number.");
       return;
@@ -107,17 +109,21 @@ export function LoginForm() {
       setError("Password must be at least 6 characters.");
       return;
     }
+
     setError("");
     setBusy(true);
-    setTimeout(() => {
-      signIn({
-        id: "u1",
-        name: "Rahul Agarwal",
-        email: EMAIL_RE.test(clean) ? clean : "rahul@example.com",
-        phone: EMAIL_RE.test(clean) ? "+91 98765 43210" : clean,
-      });
+    try {
+      const data = await authApi.login({ identifier: clean, password });
+      setUser(data.user);
+      // replace, not push: the login page should not sit in history behind
+      // the page the visitor was trying to reach.
       router.replace(next);
-    }, 700);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not sign in. Please try again.",
+      );
+      setBusy(false);
+    }
   };
 
   return (
@@ -204,7 +210,7 @@ export function SignupForm() {
 
   const { rules, score } = strengthOf(v.password);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!v.name.trim()) return setError("Enter your name.");
     if (!EMAIL_RE.test(v.email)) return setError("Enter a valid email address.");
@@ -216,16 +222,27 @@ export function SignupForm() {
 
     setError("");
     setBusy(true);
-    setTimeout(
-      () =>
-        router.push(
-          `/verify-otp?to=${encodeURIComponent(v.phone)}` +
-            `&name=${encodeURIComponent(v.name)}` +
-            `&email=${encodeURIComponent(v.email)}` +
-            `&next=${encodeURIComponent(next)}`,
-        ),
-      700,
-    );
+    try {
+      /* Sends the code and returns delivery timings. The account is only
+         created once the code is verified, so an abandoned signup leaves
+         nothing behind. */
+      await authApi.requestSignupOtp({ name: v.name, email: v.email, phone: v.phone });
+
+      router.push(
+        `/verify-otp?to=${encodeURIComponent(v.email)}` +
+          `&name=${encodeURIComponent(v.name)}` +
+          `&phone=${encodeURIComponent(v.phone)}` +
+          `&pw=1` +
+          `&next=${encodeURIComponent(next)}`,
+      );
+      // The password is handed to the verify step in memory, never in the URL.
+      sessionStorage.setItem("kc_signup_pw", v.password);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not send the code. Please try again.",
+      );
+      setBusy(false);
+    }
   };
 
   return (
@@ -356,7 +373,7 @@ export function ForgotPasswordForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = id.trim();
     if (!EMAIL_RE.test(clean) && !PHONE_RE.test(clean.replace(/\s|-/g, ""))) {
@@ -365,10 +382,15 @@ export function ForgotPasswordForm() {
     }
     setError("");
     setBusy(true);
-    setTimeout(
-      () => router.push(`/verify-otp?to=${encodeURIComponent(clean)}&reset=1`),
-      700,
-    );
+    try {
+      await authApi.forgotPassword(clean);
+      router.push(`/verify-otp?to=${encodeURIComponent(clean)}&reset=1`);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not send the code. Please try again.",
+      );
+      setBusy(false);
+    }
   };
 
   return (
@@ -418,18 +440,17 @@ export function ForgotPasswordForm() {
 export function VerifyOtpForm({
   to,
   isReset,
-  name,
-  email,
+  isSignup,
   next,
 }: {
   to: string;
   isReset: boolean;
-  name?: string;
-  email?: string;
+  /** True when this code completes a signup rather than a sign-in. */
+  isSignup: boolean;
   next?: string;
 }) {
   const router = useRouter();
-  const signIn = useAuth((s) => s.signIn);
+  const setUser = useAuth((s) => s.setUser);
   const target = next?.startsWith("/") && !next.startsWith("//") ? next : "/account";
   const [digits, setDigits] = useState(["", "", "", "", "", ""]);
   const [busy, setBusy] = useState(false);
@@ -467,27 +488,40 @@ export function VerifyOtpForm({
     refs.current[Math.min(text.length, 5)]?.focus();
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const code = digits.join("");
     if (digits.some((d) => !d)) {
       setError("Enter all six digits.");
       return;
     }
+
     setError("");
     setBusy(true);
-    setTimeout(() => {
+    try {
       if (isReset) {
+        // The code is carried to the reset screen, which sends it back with
+        // the new password in a single call.
+        sessionStorage.setItem("kc_reset", JSON.stringify({ email: to, code }));
         router.push("/reset-password");
         return;
       }
-      signIn({
-        id: "u1",
-        name: name || "There",
-        email: email || "you@example.com",
-        phone: to,
-      });
+
+      const password = sessionStorage.getItem("kc_signup_pw") ?? undefined;
+
+      const data = isSignup
+        ? await authApi.verifySignupOtp({ email: to, code, password })
+        : await authApi.verifyLoginOtp({ email: to, code });
+
+      sessionStorage.removeItem("kc_signup_pw");
+      setUser(data.user);
       router.replace(target);
-    }, 700);
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not verify that code.",
+      );
+      setBusy(false);
+    }
   };
 
   return (
@@ -525,7 +559,16 @@ export function VerifyOtpForm({
           ) : (
             <button
               type="button"
-              onClick={() => setSeconds(30)}
+              onClick={async () => {
+                try {
+                  if (isSignup) await authApi.requestLoginOtp(to);
+                  else if (isReset) await authApi.forgotPassword(to);
+                  else await authApi.requestLoginOtp(to);
+                  setSeconds(30);
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : "Could not resend.");
+                }
+              }}
               className="font-bold text-brand-600 hover:underline"
             >
               Resend code
@@ -559,6 +602,7 @@ export function VerifyOtpForm({
 
 export function ResetPasswordForm() {
   const router = useRouter();
+  const setUser = useAuth((s) => s.setUser);
   const [pw, setPw] = useState("");
   const [confirm, setConfirm] = useState("");
   const [busy, setBusy] = useState(false);
@@ -566,13 +610,31 @@ export function ResetPasswordForm() {
 
   const { rules, score } = strengthOf(pw);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (score < 3) return setError("Pick a stronger password.");
     if (pw !== confirm) return setError("The two passwords do not match.");
+
+    const stashed = sessionStorage.getItem("kc_reset");
+    if (!stashed) {
+      setError("Your reset session expired. Please request a new code.");
+      return;
+    }
+
     setError("");
     setBusy(true);
-    setTimeout(() => router.push("/login"), 700);
+    try {
+      const { email, code } = JSON.parse(stashed);
+      const data = await authApi.resetPassword({ email, code, password: pw });
+      sessionStorage.removeItem("kc_reset");
+      setUser(data.user);
+      router.replace("/account");
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not update your password.",
+      );
+      setBusy(false);
+    }
   };
 
   return (

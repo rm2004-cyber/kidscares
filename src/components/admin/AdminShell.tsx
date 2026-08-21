@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
@@ -13,16 +13,21 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  MessageSquare,
   Package,
+  PackageX,
   Search,
   Settings,
   ShoppingCart,
   Shapes,
   Tag,
   Users,
+  Wallet,
   X,
 } from "lucide-react";
 import { Logo } from "@/components/layout/Logo";
+import { adminAuthApi } from "@/utils/service";
+import { AdminGate, type Admin } from "./AdminGate";
 import { cn } from "@/lib/utils";
 
 type NavItem = {
@@ -59,6 +64,9 @@ const NAV: { group: string; items: NavItem[] }[] = [
     group: "Operations",
     items: [
       { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
+      { href: "/admin/reviews", label: "Reviews", icon: MessageSquare },
+      { href: "/admin/cancellations", label: "Cancellations", icon: PackageX },
+      { href: "/admin/payments", label: "Payments", icon: Wallet },
       { href: "/admin/customers", label: "Customers", icon: Users },
       { href: "/admin/settings", label: "Settings", icon: Settings },
     ],
@@ -66,8 +74,18 @@ const NAV: { group: string; items: NavItem[] }[] = [
 ];
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
+  return <AdminGate>{(admin) => <Shell admin={admin}>{children}</Shell>}</AdminGate>;
+}
+
+function Shell({ admin, children }: { admin: Admin; children: React.ReactNode }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const signOut = async () => {
+    await adminAuthApi.logout().catch(() => {});
+    router.replace("/admin/login");
+  };
 
   // Close the mobile drawer whenever navigation happens.
   useEffect(() => setDrawerOpen(false), [pathname]);
@@ -83,7 +101,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-dvh bg-cream">
       {/* Desktop rail — always visible from lg up. */}
       <aside className="sticky top-0 hidden h-dvh w-64 shrink-0 flex-col border-r border-ink/10 bg-ink lg:flex">
-        <SidebarContent pathname={pathname} />
+        <SidebarContent pathname={pathname} onSignOut={signOut} />
       </aside>
 
       {/* Mobile drawer */}
@@ -111,14 +129,14 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
               >
                 <X className="size-4.5" />
               </button>
-              <SidebarContent pathname={pathname} />
+              <SidebarContent pathname={pathname} onSignOut={signOut} />
             </motion.aside>
           </>
         )}
       </AnimatePresence>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar onOpenMenu={() => setDrawerOpen(true)} />
+        <Topbar admin={admin} onOpenMenu={() => setDrawerOpen(true)} />
         <main className="flex-1 px-4 py-5 sm:px-6 sm:py-6">
           <div className="mx-auto max-w-7xl">{children}</div>
         </main>
@@ -127,7 +145,13 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function SidebarContent({ pathname }: { pathname: string }) {
+function SidebarContent({
+  pathname,
+  onSignOut,
+}: {
+  pathname: string;
+  onSignOut: () => void;
+}) {
   return (
     <>
       <div className="flex h-16 shrink-0 items-center gap-3 px-4">
@@ -201,19 +225,19 @@ function SidebarContent({ pathname }: { pathname: string }) {
           <ExternalLink className="size-4.5" />
           View storefront
         </Link>
-        <Link
-          href="/admin/login"
-          className="flex items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-white/55 transition hover:bg-white/5 hover:text-white"
+        <button
+          onClick={onSignOut}
+          className="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm font-medium text-white/55 transition hover:bg-white/5 hover:text-white"
         >
           <LogOut className="size-4.5" />
           Sign out
-        </Link>
+        </button>
       </div>
     </>
   );
 }
 
-function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
+function Topbar({ admin, onOpenMenu }: { admin: Admin; onOpenMenu: () => void }) {
   return (
     <header className="sticky top-0 z-40 flex h-16 shrink-0 items-center gap-3 border-b border-line bg-white px-4 sm:px-6">
       <button
@@ -244,11 +268,16 @@ function Topbar({ onOpenMenu }: { onOpenMenu: () => void }) {
 
         <div className="flex items-center gap-2 rounded-xl py-1 pl-1 pr-2 hover:bg-cream">
           <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-brand-100 text-xs font-extrabold text-brand-700">
-            RA
+            {admin.name
+              .split(" ")
+              .map((n) => n[0])
+              .join("")
+              .slice(0, 2)
+              .toUpperCase()}
           </span>
           <div className="hidden leading-tight sm:block">
-            <p className="text-xs font-bold text-ink">Rahul Agarwal</p>
-            <p className="text-[10px] text-ink-muted">Owner</p>
+            <p className="text-xs font-bold text-ink">{admin.name}</p>
+            <p className="text-[10px] capitalize text-ink-muted">{admin.role}</p>
           </div>
         </div>
       </div>

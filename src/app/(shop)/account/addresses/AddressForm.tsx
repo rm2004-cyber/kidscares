@@ -11,7 +11,7 @@ import {
   Select,
 } from "@/components/ui/Form";
 import type { Address } from "@/lib/account/types";
-import { INDIAN_STATES } from "@/lib/account/mock";
+import { INDIAN_STATES } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 export type AddressDraft = Omit<Address, "_id">;

@@ -2,19 +2,20 @@
 
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import type { Product } from "@/lib/types";
 import { ProductCard } from "@/components/product/ProductCard";
 import { ProductGridSkeleton } from "@/components/ui/Skeletons";
 import { useWishlist } from "@/store/useWishlist";
 import { Glyph } from "@/components/ui/Glyph";
-import { useHydrated } from "@/lib/useHydrated";
+import { useEffect } from "react";
 
-export function WishlistView({ products }: { products: Product[] }) {
-  const mounted = useHydrated();
-  const ids = useWishlist((s) => s.ids);
-  const clear = useWishlist((s) => s.clear);
+export function WishlistView() {
+  const { products: saved, loaded, load, clear } = useWishlist();
 
-  const saved = products.filter((p) => ids.includes(p._id));
+  useEffect(() => {
+    if (!loaded) void load();
+  }, [loaded, load]);
+
+  const mounted = loaded;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
@@ -29,7 +30,7 @@ export function WishlistView({ products }: { products: Product[] }) {
         </div>
         {mounted && saved.length > 0 && (
           <button
-            onClick={clear}
+            onClick={() => void clear()}
             className="rounded-full border border-line px-4 py-2 text-xs font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
           >
             Clear all

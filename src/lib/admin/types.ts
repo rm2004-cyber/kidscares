@@ -8,24 +8,50 @@
  */
 
 export type OrderStatus =
-  | "pending"
+  | "placed"
   | "confirmed"
   | "packed"
   | "shipped"
+  | "in-transit"
+  | "out-for-delivery"
   | "delivered"
   | "cancelled"
-  | "returned";
+  | "returned"
+  | "rto";
 
+/** Mirrors the API's Order document, not the old local mock. */
 export type Order = {
   _id: string;
   orderNo: string;
-  customer: { name: string; email: string; phone: string };
-  items: { title: string; qty: number; price: number; image: string }[];
+  /** Populated by the API; absent if the account was removed. */
+  user?: { _id?: string; name: string; email: string; phone?: string };
+  items: {
+    title: string;
+    brand?: string;
+    qty: number;
+    price: number;
+    image?: string;
+    size?: string;
+    color?: string;
+  }[];
+  address?: {
+    fullName: string;
+    phone: string;
+    line1: string;
+    line2?: string;
+    city: string;
+    state: string;
+    pincode: string;
+  };
+  subtotal: number;
+  shipping: number;
+  discount: number;
   total: number;
   status: OrderStatus;
-  payment: "prepaid" | "cod";
-  placedAt: string;
-  city: string;
+  payment: { method: "upi" | "card" | "cod"; status: string };
+  shipping_details?: { courier?: string; awb?: string; trackingUrl?: string };
+  createdAt: string;
+  eta?: string;
 };
 
 export type AdminUser = {

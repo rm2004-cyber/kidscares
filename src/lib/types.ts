@@ -32,6 +32,8 @@ export type Category = {
   /** null for a top-level category */
   parent: string | null;
   image: string;
+  /** Name of a glyph in lib/theme/icons, used for artwork and placeholders. */
+  glyph?: string;
   /** short blurb rendered on the category landing page + used as meta fallback */
   blurb?: string;
   accent: string;

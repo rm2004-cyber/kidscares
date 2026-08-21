@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   ArrowDown,
@@ -29,6 +29,8 @@ import {
 } from "@/components/admin/ui";
 import { ImageManager } from "@/components/admin/ImageManager";
 import type { Banner } from "@/lib/types";
+import { adminApi, ApiError } from "@/utils/service";
+import { toMedia, type MediaItem } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
 /** Presets keep admins away from raw Tailwind classes. */
@@ -41,29 +43,91 @@ const GRADIENTS = [
   { id: "from-ink via-ink to-grape-600", label: "Ink → Grape" },
 ];
 
-type Row = Banner & { active: boolean };
+/* The admin form carries the full media object (url + publicId); the
+   storefront type only needs the URL, so `image` is widened here. */
+type Row = Omit<Banner, "image"> & { image?: MediaItem; active: boolean };
 
-export function BannersView({ banners }: { banners: Banner[] }) {
-  const [rows, setRows] = useState<Row[]>(
-    banners.map((b) => ({ ...b, active: true })),
-  );
+export function BannersView() {
+  const [rows, setRows] = useState<Row[]>([]);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const move = (i: number, dir: -1 | 1) => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = (await adminApi.listBanners()) as unknown[];
+      setRows(
+        (list ?? []).map((raw) => {
+          const b = raw as Banner & { isActive?: boolean; image?: unknown };
+          return { ...b, image: toMedia(b.image)[0], active: b.isActive ?? true };
+        }),
+      );
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load banners.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  /* Reordering is optimistic — the row moves instantly, and the new order is
+     persisted in one call rather than one PATCH per banner. */
+  const move = async (i: number, dir: -1 | 1) => {
     const j = i + dir;
     if (j < 0 || j >= rows.length) return;
     const next = [...rows];
     [next[i], next[j]] = [next[j], next[i]];
     setRows(next);
+    try {
+      await adminApi.reorderBanners(next.map((b) => b._id));
+    } catch {
+      await load();
+    }
   };
 
-  const upsert = (row: Row) => {
-    setRows((prev) =>
-      prev.some((r) => r._id === row._id)
-        ? prev.map((r) => (r._id === row._id ? row : r))
-        : [...prev, row],
-    );
-    setEditing(null);
+  const toggleActive = async (b: Row) => {
+    setRows((prev) => prev.map((r) => (r._id === b._id ? { ...r, active: !r.active } : r)));
+    try {
+      await adminApi.updateBanner(b._id, { isActive: !b.active });
+    } catch {
+      await load();
+    }
+  };
+
+  const remove = async (id: string) => {
+    setError("");
+    try {
+      await adminApi.deleteBanner(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete.");
+    }
+  };
+
+  const upsert = async (row: Row) => {
+    setError("");
+    const payload = {
+      title: row.title,
+      subtitle: row.subtitle,
+      cta: row.cta,
+      href: row.href,
+      gradient: row.gradient,
+      align: row.align,
+      isActive: row.active,
+      ...(row.image ? { image: row.image } : {}),
+    };
+    try {
+      if (/^[a-f\d]{24}$/i.test(row._id)) await adminApi.updateBanner(row._id, payload);
+      else await adminApi.createBanner(payload);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save.");
+    }
   };
 
   const blank = (): Row => ({
@@ -72,7 +136,7 @@ export function BannersView({ banners }: { banners: Banner[] }) {
     subtitle: "",
     cta: "Shop now",
     href: "/deals",
-    image: "",
+    image: undefined,
     gradient: GRADIENTS[0].id,
     align: "left",
     active: true,
@@ -91,7 +155,19 @@ export function BannersView({ banners }: { banners: Banner[] }) {
         }
       />
 
-      {rows.length === 0 ? (
+      {error && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <div className="space-y-3">
+          {[0, 1].map((i) => (
+            <div key={i} className="skeleton h-32 rounded-2xl" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
         <EmptyState
           icon={ImageIcon}
           title="No banners yet"
@@ -148,25 +224,19 @@ export function BannersView({ banners }: { banners: Banner[] }) {
                   </div>
 
                   <div className="flex items-center gap-1">
-                    <IconBtn label="Move up" onClick={() => move(i, -1)} disabled={i === 0}>
+                    <IconBtn label="Move up" onClick={() => void move(i, -1)} disabled={i === 0}>
                       <ArrowUp className="size-4" />
                     </IconBtn>
                     <IconBtn
                       label="Move down"
-                      onClick={() => move(i, 1)}
+                      onClick={() => void move(i, 1)}
                       disabled={i === rows.length - 1}
                     >
                       <ArrowDown className="size-4" />
                     </IconBtn>
                     <IconBtn
                       label={b.active ? "Hide" : "Show"}
-                      onClick={() =>
-                        setRows((prev) =>
-                          prev.map((r) =>
-                            r._id === b._id ? { ...r, active: !r.active } : r,
-                          ),
-                        )
-                      }
+                      onClick={() => void toggleActive(b)}
                     >
                       {b.active ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
                     </IconBtn>
@@ -176,7 +246,7 @@ export function BannersView({ banners }: { banners: Banner[] }) {
                     <IconBtn
                       label="Delete"
                       danger
-                      onClick={() => setRows((prev) => prev.filter((r) => r._id !== b._id))}
+                      onClick={() => void remove(b._id)}
                     >
                       <Trash2 className="size-4" />
                     </IconBtn>
@@ -319,8 +389,8 @@ function BannerSheet({
               <div>
                 <p className="mb-2 text-xs font-bold text-ink">Banner image</p>
                 <ImageManager
-                  images={draft.image ? [draft.image] : []}
-                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? "" })}
+                  images={toMedia(draft.image)}
+                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? undefined })}
                   max={1}
                 />
               </div>

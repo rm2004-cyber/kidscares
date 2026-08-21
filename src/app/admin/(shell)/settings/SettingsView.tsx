@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { GripVertical, Plus, Save, Star, Trash2 } from "lucide-react";
 
 import {
@@ -13,7 +13,9 @@ import {
   Toggle,
 } from "@/components/admin/ui";
 import type { SiteSettings } from "@/lib/admin/types";
-import { inr } from "@/lib/data";
+import { adminApi, ApiError } from "@/utils/service";
+import { defaultSettings } from "@/lib/admin/mock";
+import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const TABS = [
@@ -26,10 +28,26 @@ const TABS = [
 
 type TabId = (typeof TABS)[number]["id"];
 
-export function SettingsView({ initial }: { initial: SiteSettings }) {
-  const [s, setS] = useState<SiteSettings>(initial);
+export function AdminSettingsView() {
+  const [s, setS] = useState<SiteSettings>(defaultSettings);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [tab, setTab] = useState<TabId>("store");
   const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    adminApi
+      .getSettings()
+      .then((live) => {
+        /* Merged over the defaults so a field the API has not stored yet still
+           renders with a sensible value instead of undefined. */
+        if (live) setS((prev) => ({ ...prev, ...(live as SiteSettings) }));
+      })
+      .catch((err) =>
+        setError(err instanceof ApiError ? err.message : "Could not load settings."),
+      )
+      .finally(() => setLoading(false));
+  }, []);
 
   const set = <K extends keyof SiteSettings>(k: K, v: SiteSettings[K]) =>
     setS((prev) => ({ ...prev, [k]: v }));

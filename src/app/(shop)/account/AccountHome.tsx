@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -15,10 +16,9 @@ import {
 
 import { SectionCard } from "@/components/ui/Form";
 import { OrderStatusPill } from "./orders/OrderStatusPill";
-import type { AccountOrder } from "@/lib/account/types";
+import { accountApi, contentApi } from "@/utils/service";
 import { loginHref, useAuth } from "@/store/useAuth";
-import { useHydrated } from "@/lib/useHydrated";
-import { inr } from "@/lib/data";
+import { inr } from "@/lib/format";
 
 const TILES = [
   { icon: Package, title: "Your Orders", copy: "Track, return or buy again", href: "/account/orders" },
@@ -31,20 +31,44 @@ const TILES = [
 /** Wishlist is browsable as a guest; everything else needs a session. */
 const GUEST_OK = new Set(["/wishlist"]);
 
-export function AccountHome({
-  recent,
-  couponCount,
-  orderCount,
-  deliveredCount,
-}: {
-  recent: AccountOrder[];
-  couponCount: number;
-  orderCount: number;
-  deliveredCount: number;
-}) {
-  const hydrated = useHydrated();
+type OrderLite = {
+  _id: string;
+  orderNo: string;
+  status: string;
+  total: number;
+  items: { title: string; image?: string }[];
+};
+
+export function AccountHome() {
   const user = useAuth((s) => s.user);
-  const signedIn = hydrated && !!user;
+  const ready = useAuth((s) => s.ready);
+  const signedIn = ready && !!user;
+
+  const [recent, setRecent] = useState<OrderLite[]>([]);
+  const [orderCount, setOrderCount] = useState(0);
+  const [deliveredCount, setDeliveredCount] = useState(0);
+  const [couponCount, setCouponCount] = useState(0);
+
+  /* Only fetched once signed in — a guest has nothing to show, and the API
+     would reject the call anyway. */
+  useEffect(() => {
+    if (!signedIn) return;
+
+    accountApi
+      .listOrders({ limit: 20 })
+      .then((res) => {
+        const list = (res?.data ?? []) as OrderLite[];
+        setRecent(list.slice(0, 2));
+        setOrderCount(res?.meta?.total ?? list.length);
+        setDeliveredCount(list.filter((o) => o.status === "delivered").length);
+      })
+      .catch(() => {});
+
+    contentApi
+      .getCoupons()
+      .then((list) => setCouponCount((list ?? []).length))
+      .catch(() => {});
+  }, [signedIn]);
 
   const initials = user
     ? user.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()
@@ -130,7 +154,7 @@ export function AccountHome({
                   >
                     <span className="relative size-14 shrink-0 overflow-hidden rounded-xl bg-cream">
                       <Image
-                        src={o.items[0].image}
+                        src={o.items[0]?.image ?? ""}
                         alt=""
                         fill
                         unoptimized
@@ -141,7 +165,7 @@ export function AccountHome({
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-bold text-ink">{o.orderNo}</p>
                       <p className="truncate text-xs text-ink-muted">
-                        {o.items[0].title}
+                        {o.items[0]?.title}
                         {o.items.length > 1 && ` +${o.items.length - 1} more`}
                       </p>
                       <div className="mt-1">

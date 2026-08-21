@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import {
@@ -28,20 +28,19 @@ import {
   Th,
 } from "@/components/admin/ui";
 import type { Product } from "@/lib/types";
-import { discountPct, inr } from "@/lib/data";
+import { adminApi, ApiError } from "@/utils/service";
+import { discountPct, inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 12;
 
-export function ProductsView({
-  products,
-  brands,
-  categories,
-}: {
-  products: Product[];
-  brands: string[];
-  categories: { slug: string; name: string }[];
-}) {
+export function ProductsView() {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [total, setTotal] = useState(0);
+  const [brands, setBrands] = useState<string[]>([]);
+  const [categories, setCategories] = useState<{ slug: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [brand, setBrand] = useState("");
   const [category, setCategory] = useState("");
@@ -50,32 +49,63 @@ export function ProductsView({
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<string[]>([]);
 
-  const filtered = useMemo(() => {
-    let out = products.filter((p) => {
-      if (q && !`${p.title} ${p.brand}`.toLowerCase().includes(q.toLowerCase()))
-        return false;
-      if (brand && p.brand !== brand) return false;
-      if (category && !p.categorySlug.startsWith(category)) return false;
-      if (stock === "in" && !p.inStock) return false;
-      if (stock === "out" && p.inStock) return false;
-      return true;
-    });
+  /* Filtering and sorting happen server-side so the page never holds the whole
+     catalogue in memory — this list is paginated by the API. */
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await adminApi.listProducts({
+        q: q || undefined,
+        brand: brand || undefined,
+        category: category || undefined,
+        sort: sort === "newest" ? "new" : sort === "title" ? undefined : sort,
+        page,
+        limit: PAGE_SIZE,
+      });
+      let list = (res?.data ?? []) as Product[];
+      if (stock === "in") list = list.filter((p) => p.inStock);
+      if (stock === "out") list = list.filter((p) => !p.inStock);
+      if (sort === "title") list = [...list].sort((a, b) => a.title.localeCompare(b.title));
+      setProducts(list);
+      setTotal(res?.meta?.total ?? list.length);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load products.");
+    } finally {
+      setLoading(false);
+    }
+  }, [q, brand, category, stock, sort, page]);
 
-    out = [...out].sort((a, b) => {
-      switch (sort) {
-        case "price-asc": return a.price - b.price;
-        case "price-desc": return b.price - a.price;
-        case "title": return a.title.localeCompare(b.title);
-        case "rating": return b.rating - a.rating;
-        default: return +new Date(b.createdAt) - +new Date(a.createdAt);
-      }
-    });
-    return out;
-  }, [products, q, brand, category, stock, sort]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  useEffect(() => {
+    adminApi.listBrands().then((b) => setBrands((b ?? []).map((x: { name: string }) => x.name))).catch(() => {});
+    adminApi
+      .listCategories()
+      .then((c) =>
+        setCategories(
+          ((c ?? []) as { slug: string; name: string; parent: string | null }[])
+            .filter((x) => x.parent === null)
+            .map((x) => ({ slug: x.slug, name: x.name })),
+        ),
+      )
+      .catch(() => {});
+  }, []);
+
+  const remove = async (id: string) => {
+    try {
+      await adminApi.deleteProduct(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete.");
+    }
+  };
+
+  const rows = products;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
-  const rows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
   const allOnPageSelected =
     rows.length > 0 && rows.every((r) => selected.includes(r._id));
@@ -94,7 +124,7 @@ export function ProductsView({
     <>
       <PageHeader
         title="Products"
-        subtitle={`${products.length} products in the catalogue`}
+        subtitle={loading ? "Loading…" : `${total} products in the catalogue`}
         actions={
           <>
             <Button variant="secondary" size="sm">
@@ -109,6 +139,12 @@ export function ProductsView({
           </>
         }
       />
+
+      {error && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {error}
+        </p>
+      )}
 
       <Card bodyClassName="p-3 sm:p-3">
         <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
@@ -338,11 +374,11 @@ export function ProductsView({
           </TableWrap>
         )}
 
-        {filtered.length > PAGE_SIZE && (
+        {total > PAGE_SIZE && (
           <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line px-4 py-3">
             <p className="text-xs text-ink-muted">
               Showing {(safePage - 1) * PAGE_SIZE + 1}–
-              {Math.min(safePage * PAGE_SIZE, filtered.length)} of {filtered.length}
+              {Math.min(safePage * PAGE_SIZE, total)} of {total}
             </p>
             <div className="flex items-center gap-1">
               <Button
@@ -395,12 +431,14 @@ function IconAction({
   href,
   external,
   danger,
+  onClick,
   children,
 }: {
   label: string;
   href?: string;
   external?: boolean;
   danger?: boolean;
+  onClick?: () => void;
   children: React.ReactNode;
 }) {
   const className = cn(
@@ -424,7 +462,13 @@ function IconAction({
     );
   }
   return (
-    <button type="button" aria-label={label} title={label} className={className}>
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={className}
+    >
       {children}
     </button>
   );

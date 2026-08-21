@@ -3,39 +3,83 @@
 import { useRef, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
-import { GripVertical, Star, Trash2, Upload } from "lucide-react";
+import { AlertCircle, GripVertical, Loader2, Star, Trash2, Upload } from "lucide-react";
+
+import { adminApi, ApiError } from "@/utils/service";
+import type { MediaItem } from "@/lib/media";
 import { cn } from "@/lib/utils";
+
+const MAX_BYTES = 8 * 1024 * 1024;
 
 /**
  * Image manager.
  *
- * Currently local-only: files are held as object URLs so the form is fully
- * usable before Cloudinary exists. The upload handler is the single seam —
- * `onUpload` will POST to a signed Cloudinary endpoint and return secure URLs,
- * and nothing else in this component changes.
+ * Files go straight to Cloudinary through the API and come back as
+ * `{ url, publicId }`. The publicId is kept on the item so removing an image
+ * can also delete the asset — otherwise every edit would leak files into the
+ * Cloudinary account with no way to find them again.
  *
- * First image is the primary; reordering promotes a different one.
+ * A local object URL is shown while the upload is in flight so the grid never
+ * jumps; it is replaced by the real URL on success and revoked either way.
  */
 export function ImageManager({
   images,
   onChange,
   max = 8,
 }: {
-  images: string[];
-  onChange: (next: string[]) => void;
+  images: MediaItem[];
+  onChange: (next: MediaItem[]) => void;
   max?: number;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [pending, setPending] = useState<string[]>([]);
+  const [error, setError] = useState("");
 
-  const addFiles = (files: FileList | null) => {
-    if (!files?.length) return;
-    const urls = Array.from(files)
+  const addFiles = async (fileList: FileList | null) => {
+    if (!fileList?.length) return;
+    setError("");
+
+    const files = Array.from(fileList)
       .filter((f) => f.type.startsWith("image/"))
-      .slice(0, max - images.length)
-      .map((f) => URL.createObjectURL(f));
-    if (urls.length) onChange([...images, ...urls]);
+      .slice(0, max - images.length);
+
+    if (!files.length) return;
+
+    const tooBig = files.find((f) => f.size > MAX_BYTES);
+    if (tooBig) {
+      setError(`${tooBig.name} is larger than 8MB.`);
+      return;
+    }
+
+    const previews = files.map((f) => URL.createObjectURL(f));
+    setPending(previews);
+
+    try {
+      const uploaded = (await adminApi.uploadImages(files)) as MediaItem[];
+      onChange([...images, ...uploaded]);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : "Upload failed. Check the Cloudinary settings in the server .env.",
+      );
+    } finally {
+      previews.forEach(URL.revokeObjectURL);
+      setPending([]);
+    }
+  };
+
+  const removeAt = async (index: number) => {
+    const target = images[index];
+    onChange(images.filter((_, i) => i !== index));
+
+    // Best effort: the form already dropped it, so a failed delete only leaves
+    // an orphaned file, never a broken product.
+    if (target?.publicId) {
+      adminApi.deleteImage(target.publicId).catch(() => {});
+    }
   };
 
   const move = (from: number, to: number) => {
@@ -46,13 +90,15 @@ export function ImageManager({
     onChange(next);
   };
 
+  const busy = pending.length > 0;
+
   return (
     <div>
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
         <AnimatePresence initial={false}>
-          {images.map((src, i) => (
+          {images.map((img, i) => (
             <motion.div
-              key={src}
+              key={img.publicId ?? img.url}
               layout
               exit={{ opacity: 0, scale: 0.9 }}
               draggable
@@ -69,7 +115,7 @@ export function ImageManager({
                 dragIndex === i && "opacity-40",
               )}
             >
-              <Image src={src} alt="" fill unoptimized sizes="120px" className="object-cover" />
+              <Image src={img.url} alt="" fill unoptimized sizes="120px" className="object-cover" />
 
               {i === 0 && (
                 <span className="absolute left-1 top-1 flex items-center gap-0.5 rounded-md bg-brand-500 px-1.5 py-0.5 text-[9px] font-bold text-white">
@@ -96,7 +142,7 @@ export function ImageManager({
                   )}
                   <button
                     type="button"
-                    onClick={() => onChange(images.filter((_, j) => j !== i))}
+                    onClick={() => void removeAt(i)}
                     title="Remove"
                     aria-label="Remove image"
                     className="grid size-5 place-items-center rounded text-white/80 hover:bg-red-500 hover:text-white"
@@ -109,9 +155,24 @@ export function ImageManager({
           ))}
         </AnimatePresence>
 
-        {images.length < max && (
+        {/* Optimistic tiles while the upload is in flight. */}
+        {pending.map((src) => (
+          <div
+            key={src}
+            className="relative aspect-square overflow-hidden rounded-xl border border-line bg-cream"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={src} alt="" className="size-full object-cover opacity-40" />
+            <span className="absolute inset-0 grid place-items-center">
+              <Loader2 className="size-5 animate-spin text-brand-500" />
+            </span>
+          </div>
+        ))}
+
+        {images.length + pending.length < max && (
           <button
             type="button"
+            disabled={busy}
             onClick={() => inputRef.current?.click()}
             onDragOver={(e) => {
               e.preventDefault();
@@ -121,10 +182,10 @@ export function ImageManager({
             onDrop={(e) => {
               e.preventDefault();
               setDragOver(false);
-              addFiles(e.dataTransfer.files);
+              void addFiles(e.dataTransfer.files);
             }}
             className={cn(
-              "flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed transition",
+              "flex aspect-square flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed transition disabled:opacity-50",
               dragOver
                 ? "border-brand-400 bg-brand-50"
                 : "border-line bg-cream hover:border-brand-300 hover:bg-brand-50/50",
@@ -145,14 +206,21 @@ export function ImageManager({
         multiple
         hidden
         onChange={(e) => {
-          addFiles(e.target.files);
+          void addFiles(e.target.files);
           e.target.value = "";
         }}
       />
 
+      {error && (
+        <p className="mt-2 flex items-start gap-1.5 text-[11px] font-semibold text-red-600">
+          <AlertCircle className="mt-px size-3.5 shrink-0" />
+          {error}
+        </p>
+      )}
+
       <p className="mt-2 text-[11px] text-ink-muted">
         {images.length}/{max} images · drag to reorder · first image is used on
-        cards and as the social preview
+        cards and as the social preview · JPG or PNG up to 8MB
       </p>
     </div>
   );

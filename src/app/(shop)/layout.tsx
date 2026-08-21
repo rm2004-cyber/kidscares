@@ -4,6 +4,8 @@ import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { BottomTabs } from "@/components/layout/BottomTabs";
 import { CartDrawer } from "@/components/cart/CartDrawer";
+import { ChatWidget } from "@/components/support/ChatWidget";
+import { SessionProvider } from "@/components/auth/SessionProvider";
 import { JsonLd } from "@/components/JsonLd";
 import { organizationLd, websiteLd } from "@/lib/seo";
 import { getAgeGroups, getAllCategories, getTopCategories } from "@/lib/data";
@@ -23,7 +25,7 @@ export default async function ShopLayout({
   ]);
 
   return (
-    <>
+    <SessionProvider>
       <Backdrop />
       <JsonLd data={[organizationLd(), websiteLd()]} />
 
@@ -53,6 +55,7 @@ export default async function ShopLayout({
 
       <CartDrawer />
       <BottomTabs />
-    </>
+      <ChatWidget />
+    </SessionProvider>
   );
 }

@@ -1,5 +1,6 @@
 import type { Product } from "@/lib/types";
 import type { SeoValue } from "@/components/admin/SeoEditor";
+import { toMedia, type MediaItem } from "@/lib/media";
 
 /**
  * Pure form helpers.
@@ -16,7 +17,7 @@ export type ProductFormValue = {
   brand: string;
   categorySlug: string;
   ageSlugs: string[];
-  images: string[];
+  images: MediaItem[];
   price: number;
   mrp: number;
   badge: Product["badge"] | "";
@@ -65,7 +66,7 @@ export function toFormValue(p: Product): ProductFormValue {
     brand: p.brand,
     categorySlug: p.categorySlug,
     ageSlugs: p.ageSlugs,
-    images: p.images,
+    images: toMedia(p.images),
     price: p.price,
     mrp: p.mrp,
     badge: p.badge ?? "",

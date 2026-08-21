@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -25,12 +25,13 @@ import {
 
 import { Button, Input, RadioCard, SectionCard } from "@/components/ui/Form";
 import { AddressFormSheet, emptyAddress, type AddressDraft } from "../account/addresses/AddressForm";
-import { cartTotals, useCart } from "@/store/useCart";
+import { useCart } from "@/store/useCart";
 import { defaultAddress, useAddresses } from "@/store/useAddresses";
-import { couponDiscount, useCoupon } from "@/store/useCoupon";
 import { useHydrated } from "@/lib/useHydrated";
-import { coupons as ALL_COUPONS } from "@/lib/account/mock";
-import { inr } from "@/lib/data";
+import { inr } from "@/lib/format";
+import { accountApi, ApiError } from "@/utils/service";
+import { useAuth } from "@/store/useAuth";
+import { useRazorpay } from "@/components/checkout/useRazorpay";
 import { cn } from "@/lib/utils";
 
 const STEPS = ["Address", "Delivery", "Payment"] as const;
@@ -64,12 +65,16 @@ export function CheckoutView() {
   const router = useRouter();
   const hydrated = useHydrated();
 
-  const lines = useCart((s) => s.lines);
-  const clearCart = useCart((s) => s.clear);
-  const { addresses, add } = useAddresses();
-  const applied = useCoupon((s) => s.applied);
-  const applyCoupon = useCoupon((s) => s.apply);
-  const clearCoupon = useCoupon((s) => s.clear);
+  const {
+    lines,
+    totals,
+    couponCode,
+    applyCoupon,
+    removeCoupon,
+    load: loadCart,
+    loaded: cartLoaded,
+  } = useCart();
+  const { addresses, add, load: loadAddresses, loaded: addressesLoaded } = useAddresses();
 
   const [step, setStep] = useState(0);
   const [addressId, setAddressId] = useState<string | null>(null);
@@ -79,53 +84,85 @@ export function CheckoutView() {
   const [codeInput, setCodeInput] = useState("");
   const [codeError, setCodeError] = useState("");
   const [placing, setPlacing] = useState(false);
+  const [placeError, setPlaceError] = useState("");
+  const user = useAuth((s) => s.user);
+  const { pay } = useRazorpay();
 
-  const totals = cartTotals(lines);
+  useEffect(() => {
+    if (!addressesLoaded) void loadAddresses();
+    if (!cartLoaded) void loadCart();
+  }, [addressesLoaded, loadAddresses, cartLoaded, loadCart]);
+
   const selectedAddress =
     addresses.find((a) => a._id === addressId) ?? defaultAddress(addresses);
 
-  const deliveryFee =
-    DELIVERY.find((d) => d.id === delivery)?.price ?? 0;
-  const baseShipping = totals.shipping + deliveryFee;
+  /* The API returns totals with any coupon already applied; only the express
+     surcharge is added here, and the server recomputes it at order time. */
+  const deliveryFee = DELIVERY.find((d) => d.id === delivery)?.price ?? 0;
+  const shipping = totals.shipping + deliveryFee;
+  const grandTotal = Math.max(0, totals.subtotal + shipping - totals.discount);
 
-  const couponResult = useMemo(
-    () => couponDiscount(applied, totals.subtotal, baseShipping),
-    [applied, totals.subtotal, baseShipping],
-  );
-
-  const shipping = couponResult.shippingWaived ? 0 : baseShipping;
-  const grandTotal = Math.max(
-    0,
-    totals.subtotal + shipping - couponResult.discount,
-  );
-
-  const applyTyped = (e: React.FormEvent) => {
+  const applyTyped = async (e: React.FormEvent) => {
     e.preventDefault();
-    const found = ALL_COUPONS.find(
-      (c) => c.code.toLowerCase() === codeInput.trim().toLowerCase(),
-    );
-    if (!found) {
-      setCodeError("That code is not valid.");
-      return;
-    }
-    const res = couponDiscount(found, totals.subtotal, baseShipping);
-    if (res.reason) {
-      setCodeError(res.reason);
-      return;
-    }
-    applyCoupon(found);
-    setCodeInput("");
     setCodeError("");
+    try {
+      await applyCoupon(codeInput.trim());
+      setCodeInput("");
+    } catch (err) {
+      setCodeError(err instanceof ApiError ? err.message : "That code is not valid.");
+    }
   };
 
-  const placeOrder = () => {
+  /**
+   * Places the order, then settles it.
+   *
+   * The order is created first and paid second on purpose: a COD order is done
+   * immediately, and a prepaid one already exists if the customer abandons the
+   * payment window — so nothing is lost and they can pay later from Your Orders.
+   */
+  const placeOrder = async () => {
+    if (!selectedAddress) {
+      setPlaceError("Choose a delivery address.");
+      setStep(0);
+      return;
+    }
+
     setPlacing(true);
-    // Payment integration lands with the backend phase.
-    setTimeout(() => {
-      clearCart();
-      clearCoupon();
-      router.push("/checkout/success");
-    }, 1100);
+    setPlaceError("");
+
+    try {
+      const order = await accountApi.placeOrder({
+        addressId: selectedAddress._id,
+        paymentMethod: payment,
+        deliverySpeed: delivery,
+      });
+
+      if (payment === "cod") {
+        router.push(`/checkout/success?order=${order._id}`);
+        return;
+      }
+
+      const result = await pay({ orderId: order._id, user });
+
+      if (result.ok) {
+        router.push(`/checkout/success?order=${order._id}`);
+        return;
+      }
+
+      if (result.reason === "dismissed") {
+        setPlaceError(
+          "Payment window closed. Your order is saved — you can pay for it from Your Orders.",
+        );
+      } else {
+        setPlaceError(result.message ?? "Payment could not be completed.");
+      }
+      setPlacing(false);
+    } catch (err) {
+      setPlaceError(
+        err instanceof ApiError ? err.message : "Could not place your order. Please try again.",
+      );
+      setPlacing(false);
+    }
   };
 
   if (!hydrated) {
@@ -317,15 +354,13 @@ export function CheckoutView() {
                       title={p.title}
                       subtitle={p.subtitle}
                     >
-                      {p.id === "upi" && (
-                        <Input placeholder="yourname@upi" aria-label="UPI ID" />
-                      )}
-                      {p.id === "card" && (
-                        <div className="grid gap-2 sm:grid-cols-[1fr_90px_90px]">
-                          <Input placeholder="Card number" inputMode="numeric" aria-label="Card number" />
-                          <Input placeholder="MM/YY" aria-label="Expiry" />
-                          <Input placeholder="CVV" inputMode="numeric" aria-label="CVV" />
-                        </div>
+                      {/* Card and UPI details are collected by Razorpay's own
+                          window — they must never touch our page. */}
+                      {(p.id === "upi" || p.id === "card") && (
+                        <p className="text-xs text-ink-soft">
+                          You will be taken to a secure Razorpay window to complete
+                          the payment.
+                        </p>
                       )}
                       {p.id === "cod" && (
                         <p className="text-xs text-ink-soft">
@@ -337,12 +372,22 @@ export function CheckoutView() {
 
                   <p className="flex items-center justify-center gap-1.5 pt-2 text-[11px] font-semibold text-ink-muted">
                     <Lock className="size-3" />
-                    This is a preview build — no payment is taken.
+                    Payments are processed securely by Razorpay.
                   </p>
                 </SectionCard>
               )}
             </motion.div>
           </AnimatePresence>
+
+          {placeError && (
+            <p
+              role="alert"
+              className="mt-4 flex items-start gap-2 rounded-2xl border-2 border-brand-200 bg-brand-50 px-4 py-2.5 text-xs font-semibold text-brand-700"
+            >
+              <Lock className="mt-px size-3.5 shrink-0" />
+              {placeError}
+            </p>
+          )}
 
           <div className="mt-4 flex gap-2">
             {step > 0 && (
@@ -399,17 +444,15 @@ export function CheckoutView() {
           </SectionCard>
 
           <SectionCard title="Coupon">
-            {applied && !couponResult.reason ? (
+            {couponCode ? (
               <div className="flex items-center gap-2 rounded-2xl border-2 border-mint-300 bg-mint-50 p-3">
                 <Tag className="size-4 shrink-0 text-mint-600" />
                 <div className="min-w-0 flex-1">
-                  <p className="text-xs font-extrabold text-mint-700">
-                    {applied.code}
-                  </p>
-                  <p className="text-[11px] text-mint-700/80">{applied.title}</p>
+                  <p className="text-xs font-extrabold text-mint-700">{couponCode}</p>
+                  <p className="text-[11px] text-mint-700/80">Discount applied</p>
                 </div>
                 <button
-                  onClick={clearCoupon}
+                  onClick={() => void removeCoupon()}
                   className="text-[11px] font-bold text-ink-soft hover:text-brand-600"
                 >
                   Remove
@@ -451,10 +494,10 @@ export function CheckoutView() {
               {totals.savings > 0 && (
                 <Row label="Product discount" value={`− ${inr(totals.savings)}`} accent />
               )}
-              {couponResult.discount > 0 && (
+              {totals.discount > 0 && (
                 <Row
-                  label={`Coupon (${applied?.code})`}
-                  value={`− ${inr(couponResult.discount)}`}
+                  label={couponCode ? `Coupon (${couponCode})` : "Discount"}
+                  value={`− ${inr(totals.discount)}`}
                   accent
                 />
               )}
@@ -477,9 +520,9 @@ export function CheckoutView() {
         initial={emptyAddress}
         title="Add a delivery address"
         onClose={() => setSheetOpen(false)}
-        onSave={(v: AddressDraft) => {
-          const id = add(v);
-          setAddressId(id);
+        onSave={async (v: AddressDraft) => {
+          const created = await add(v);
+          if (created?._id) setAddressId(created._id);
           setSheetOpen(false);
         }}
       />

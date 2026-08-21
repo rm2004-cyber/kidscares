@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Eye, EyeOff, Loader2, LogIn } from "lucide-react";
 import { Button, Field, Input } from "@/components/admin/ui";
 import { Logo } from "@/components/layout/Logo";
+import { adminAuthApi, ApiError } from "@/utils/service";
 
 export function LoginForm() {
   const router = useRouter();
@@ -14,7 +15,7 @@ export function LoginForm() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
 
@@ -23,14 +24,18 @@ export function LoginForm() {
       return;
     }
 
-    /* No auth backend yet — this only exercises the loading and error states.
-       The real handler will POST credentials, receive an httpOnly session
-       cookie, and redirect on success. */
     setBusy(true);
-    setTimeout(() => {
+    try {
+      /* The API sets an httpOnly admin cookie; nothing sensitive is stored
+         client-side, so a refresh keeps the session and JS cannot read it. */
+      await adminAuthApi.login({ email: email.trim(), password });
+      router.replace("/admin");
+    } catch (err) {
+      setError(
+        err instanceof ApiError ? err.message : "Could not sign in. Please try again.",
+      );
       setBusy(false);
-      router.push("/admin");
-    }, 700);
+    }
   };
 
   return (
@@ -120,8 +125,9 @@ export function LoginForm() {
       </div>
 
       <p className="mt-6 rounded-xl bg-white px-3 py-2.5 text-[11px] leading-relaxed text-ink-muted ring-1 ring-line">
-        <b className="text-ink">Preview build.</b> Authentication is not wired
-        yet — any email and password will take you through to the dashboard.
+        Seeded owner account: <b className="text-ink">admin@kidscares.example</b>
+        {" / "}
+        <b className="text-ink">ChangeMe@123</b> — change it before deploying.
       </p>
     </form>
   );

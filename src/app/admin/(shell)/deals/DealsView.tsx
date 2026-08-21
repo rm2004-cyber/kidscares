@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowRight, Clock, Flame, Pencil, Plus, Tag, Timer, Trash2, X } from "lucide-react";
@@ -18,6 +18,8 @@ import {
 } from "@/components/admin/ui";
 import { ImageManager } from "@/components/admin/ImageManager";
 import type { Deal } from "@/lib/types";
+import { adminApi, ApiError } from "@/utils/service";
+import { toMedia, type MediaItem } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
 const ACCENTS = [
@@ -28,7 +30,7 @@ const ACCENTS = [
   { id: "bg-sky-ks/10", label: "Sky" },
 ];
 
-type Row = Deal & { active: boolean };
+type Row = Omit<Deal, "image"> & { image?: MediaItem; active: boolean };
 
 /** Converts an ISO string to the value a datetime-local input expects. */
 const toLocalInput = (iso: string) => {
@@ -37,19 +39,74 @@ const toLocalInput = (iso: string) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export function DealsView({ deals }: { deals: Deal[] }) {
-  const [rows, setRows] = useState<Row[]>(deals.map((d) => ({ ...d, active: true })));
+export function DealsView() {
+  const [rows, setRows] = useState<Row[]>([]);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   /** Applies one end time to every deal — the common "sale ends tonight" case. */
-  const [bulkEnd, setBulkEnd] = useState(toLocalInput(deals[0]?.endsAt ?? new Date().toISOString()));
+  const [bulkEnd, setBulkEnd] = useState(toLocalInput(new Date().toISOString()));
 
-  const upsert = (row: Row) => {
-    setRows((prev) =>
-      prev.some((r) => r._id === row._id)
-        ? prev.map((r) => (r._id === row._id ? row : r))
-        : [...prev, row],
-    );
-    setEditing(null);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = (await adminApi.listDeals()) as unknown[];
+      const mapped = (list ?? []).map((raw) => {
+        const d = raw as Deal & { isActive?: boolean; image?: unknown };
+        return { ...d, image: toMedia(d.image)[0], active: d.isActive ?? true };
+      });
+      setRows(mapped);
+      if (mapped[0]) setBulkEnd(toLocalInput(mapped[0].endsAt));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load deals.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const upsert = async (row: Row) => {
+    setError("");
+    const payload = {
+      title: row.title,
+      discountLabel: row.discountLabel,
+      href: row.href,
+      accent: row.accent,
+      endsAt: row.endsAt,
+      isActive: row.active,
+      ...(row.image ? { image: row.image } : {}),
+    };
+    try {
+      if (/^[a-f\d]{24}$/i.test(row._id)) await adminApi.updateDeal(row._id, payload);
+      else await adminApi.createDeal(payload);
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save.");
+    }
+  };
+
+  const remove = async (id: string) => {
+    setError("");
+    try {
+      await adminApi.deleteDeal(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete.");
+    }
+  };
+
+  const applyToAll = async () => {
+    setError("");
+    try {
+      await adminApi.setDealsEndsAt(new Date(bulkEnd).toISOString());
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update the countdown.");
+    }
   };
 
   const blank = (): Row => ({
@@ -57,7 +114,7 @@ export function DealsView({ deals }: { deals: Deal[] }) {
     title: "",
     discountLabel: "",
     href: "/deals",
-    image: "",
+    image: undefined,
     accent: ACCENTS[0].id,
     endsAt: new Date(Date.now() + 86_400_000).toISOString(),
     active: true,
@@ -94,14 +151,7 @@ export function DealsView({ deals }: { deals: Deal[] }) {
           </Field>
           <Button
             variant="secondary"
-            onClick={() =>
-              setRows((prev) =>
-                prev.map((r) => ({
-                  ...r,
-                  endsAt: new Date(bulkEnd).toISOString(),
-                })),
-              )
-            }
+            onClick={applyToAll}
           >
             <Clock className="size-4" />
             Apply to all
@@ -116,7 +166,19 @@ export function DealsView({ deals }: { deals: Deal[] }) {
         </div>
       </Card>
 
-      {rows.length === 0 ? (
+      {error && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {error}
+        </p>
+      )}
+
+      {loading ? (
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-24 rounded-2xl" />
+          ))}
+        </div>
+      ) : rows.length === 0 ? (
         <EmptyState
           icon={Flame}
           title="No deals running"
@@ -136,7 +198,7 @@ export function DealsView({ deals }: { deals: Deal[] }) {
                   )}
                 >
                   {d.image ? (
-                    <Image src={d.image} alt="" fill unoptimized sizes="64px" className="object-cover" />
+                    <Image src={d.image?.url ?? ""} alt="" fill unoptimized sizes="64px" className="object-cover" />
                   ) : (
                     <span className="grid size-full place-items-center"><Tag className="size-6 text-ink-muted" /></span>
                   )}
@@ -162,7 +224,7 @@ export function DealsView({ deals }: { deals: Deal[] }) {
                     <Pencil className="size-3.5" />
                   </button>
                   <button
-                    onClick={() => setRows((prev) => prev.filter((r) => r._id !== d._id))}
+                    onClick={() => void remove(d._id)}
                     aria-label="Delete deal"
                     className="grid size-7 place-items-center rounded-lg text-ink-muted hover:bg-red-50 hover:text-red-600"
                   >
@@ -275,8 +337,8 @@ function DealSheet({
               <div>
                 <p className="mb-2 text-xs font-bold text-ink">Tile image</p>
                 <ImageManager
-                  images={draft.image ? [draft.image] : []}
-                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? "" })}
+                  images={toMedia(draft.image)}
+                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? undefined })}
                   max={1}
                 />
               </div>

@@ -17,13 +17,22 @@ import {
   X,
 } from "lucide-react";
 import type { AgeGroup, Category } from "@/lib/types";
-import { useCart, cartTotals } from "@/store/useCart";
+import { useCart } from "@/store/useCart";
 import { useWishlist } from "@/store/useWishlist";
 import { useHydrated } from "@/lib/useHydrated";
 import { Logo } from "./Logo";
 import { GlyphBadge } from "@/components/ui/Glyph";
 import { AGE_GLYPHS } from "@/lib/theme/ageGlyphs";
+import { catalogApi } from "@/utils/service";
 import { cn } from "@/lib/utils";
+
+type Suggestion = {
+  _id: string;
+  slug: string;
+  title: string;
+  brand: string;
+  images?: { url: string }[];
+};
 
 type Props = {
   topCategories: Category[];
@@ -38,14 +47,15 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const scrolledRef = useRef(false);
   const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const lines = useCart((s) => s.lines);
+  const count = useCart((s) => s.totals.count);
   const openCart = useCart((s) => s.open);
-  const wishlistIds = useWishlist((s) => s.ids);
-  const { count } = cartTotals(lines);
+  const wishlistCount = useWishlist((s) => s.ids.length);
 
   /* Scroll only ever toggles a boolean, so the handler is throttled to one
      rAF and bails before touching React state unless the value actually
@@ -92,8 +102,37 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const q = query.trim();
-    if (q) router.push(`/search?q=${encodeURIComponent(q)}`);
+    if (q) {
+      setSuggestOpen(false);
+      router.push(`/search?q=${encodeURIComponent(q)}`);
+    }
   };
+
+  /* Debounced so a fast typist fires one request, not one per keystroke.
+     Anything under two characters matches too much to be useful. */
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      catalogApi
+        .suggestions(q)
+        .then((list) => {
+          setSuggestions((list ?? []) as Suggestion[]);
+          setSuggestOpen(true);
+        })
+        .catch(() => setSuggestions([]));
+    }, 220);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
 
   return (
     <header
@@ -118,20 +157,73 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
 
         <Logo size="lg" priority className="!h-10 sm:!h-14" />
 
-        <form
-          onSubmit={submitSearch}
-          className="relative hidden flex-1 items-center md:flex"
-          role="search"
-        >
-          <Search className="pointer-events-none absolute left-4 size-4 text-ink-muted" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search for prams, rompers, soft toys…"
-            aria-label="Search products"
-            className="h-11 w-full rounded-full border border-line bg-cream pl-11 pr-4 text-sm outline-none transition focus:border-brand-300 focus:bg-white"
-          />
-        </form>
+        <div className="relative hidden flex-1 md:block">
+          <form onSubmit={submitSearch} className="relative flex items-center" role="search">
+            <Search className="pointer-events-none absolute left-4 size-4 text-ink-muted" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onFocus={() => suggestions.length && setSuggestOpen(true)}
+              onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
+              placeholder="Search for prams, rompers, soft toys…"
+              aria-label="Search products"
+              aria-expanded={suggestOpen}
+              className="h-11 w-full rounded-full border border-line bg-cream pl-11 pr-4 text-sm outline-none transition focus:border-brand-300 focus:bg-white"
+            />
+          </form>
+
+          <AnimatePresence>
+            {suggestOpen && suggestions.length > 0 && (
+              <motion.ul
+                initial={{ opacity: 0, y: -6 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -6 }}
+                transition={{ duration: 0.15 }}
+                className="absolute inset-x-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-line bg-white py-1.5 shadow-[0_20px_44px_-20px_rgba(23,32,46,0.35)]"
+              >
+                {suggestions.map((sug) => (
+                  <li key={sug._id}>
+                    <Link
+                      href={`/product/${sug.slug}`}
+                      onClick={() => setSuggestOpen(false)}
+                      className="flex items-center gap-3 px-3 py-2 transition hover:bg-cream"
+                    >
+                      <span className="relative size-10 shrink-0 overflow-hidden rounded-lg bg-cream">
+                        {sug.images?.[0]?.url && (
+                          <Image
+                            src={sug.images[0].url}
+                            alt=""
+                            fill
+                            unoptimized
+                            sizes="40px"
+                            className="object-cover"
+                          />
+                        )}
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-semibold text-ink">
+                          {sug.title}
+                        </span>
+                        <span className="block text-[11px] text-ink-muted">{sug.brand}</span>
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+                <li className="border-t border-line pt-1">
+                  <button
+                    onClick={() => {
+                      setSuggestOpen(false);
+                      router.push(`/search?q=${encodeURIComponent(query.trim())}`);
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs font-bold text-brand-600 hover:bg-cream"
+                  >
+                    See all results for “{query.trim()}”
+                  </button>
+                </li>
+              </motion.ul>
+            )}
+          </AnimatePresence>
+        </div>
 
         <nav className="ml-auto flex items-center gap-1 sm:gap-2">
           <Link
@@ -148,7 +240,7 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
             aria-label="Wishlist"
           >
             <Heart className="size-5" />
-            {mounted && wishlistIds.length > 0 && <Bubble n={wishlistIds.length} />}
+            {mounted && wishlistCount > 0 && <Bubble n={wishlistCount} />}
           </Link>
 
           <button

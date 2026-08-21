@@ -5,7 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Heart, Plus, Star } from "lucide-react";
 import type { Product } from "@/lib/types";
-import { discountPct, inr } from "@/lib/data";
+import { discountPct, inr } from "@/lib/format";
 import { useWishlist } from "@/store/useWishlist";
 import { useHydrated } from "@/lib/useHydrated";
 import { useCart } from "@/store/useCart";

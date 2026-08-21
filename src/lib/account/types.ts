@@ -24,7 +24,7 @@ export type Coupon = {
   minOrder: number;
   expiresAt: string;
   category?: string;
-  isNew?: boolean;
+  featured?: boolean;
 };
 
 export type OrderStatus =

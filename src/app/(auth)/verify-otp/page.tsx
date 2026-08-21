@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { VerifyOtpForm } from "../AuthForms";
 
 export const metadata: Metadata = {
@@ -15,12 +16,13 @@ export default async function VerifyOtpPage({
   const one = (k: string) => (typeof sp[k] === "string" ? (sp[k] as string) : undefined);
 
   return (
-    <VerifyOtpForm
-      to={one("to") ?? ""}
-      isReset={sp.reset === "1"}
-      name={one("name")}
-      email={one("email")}
-      next={one("next")}
-    />
+    <Suspense fallback={<div className="skeleton h-72 rounded-2xl" />}>
+      <VerifyOtpForm
+        to={one("to") ?? ""}
+        isReset={sp.reset === "1"}
+        isSignup={sp.pw === "1"}
+        next={one("next")}
+      />
+    </Suspense>
   );
 }

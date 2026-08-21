@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import {
@@ -12,12 +12,10 @@ import {
   Truck,
 } from "lucide-react";
 import { Button, Input } from "@/components/ui/Form";
-import { coupons as ALL_COUPONS } from "@/lib/account/mock";
+import { contentApi, ApiError } from "@/utils/service";
 import type { Coupon } from "@/lib/account/types";
-import { cartTotals, useCart } from "@/store/useCart";
-import { couponDiscount, useCoupon } from "@/store/useCoupon";
-import { useHydrated } from "@/lib/useHydrated";
-import { inr } from "@/lib/data";
+import { useCart } from "@/store/useCart";
+import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const TYPE_ICON = { percent: BadgePercent, flat: Ticket, shipping: Truck };
@@ -28,55 +26,81 @@ function daysLeft(iso: string) {
 }
 
 export function CouponsView({ compact = false }: { compact?: boolean }) {
-  const hydrated = useHydrated();
-  const lines = useCart((s) => s.lines);
-  const { subtotal, shipping } = cartTotals(lines);
+  /* The cart is the source of truth for what a coupon is worth — the API
+     evaluates it against live prices, so nothing is computed here. */
+  const { totals, couponCode, applyCoupon, removeCoupon, load, loaded } = useCart();
+  const { subtotal, shipping } = totals;
 
-  const applied = useCoupon((s) => s.applied);
-  const apply = useCoupon((s) => s.apply);
-  const clear = useCoupon((s) => s.clear);
-
+  const [all, setAll] = useState<Coupon[]>([]);
+  const [loadingList, setLoadingList] = useState(true);
   const [code, setCode] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const hydrated = loaded;
+
+  useEffect(() => {
+    if (!loaded) void load();
+    contentApi
+      .getCoupons()
+      .then((list) => setAll((list ?? []) as Coupon[]))
+      .catch(() => setAll([]))
+      .finally(() => setLoadingList(false));
+  }, [loaded, load]);
+
+  const applied = all.find((c) => c.code === couponCode) ?? null;
 
   /* Eligibility is derived from the live cart, so a code the shopper cannot
      use yet says exactly how much more they need rather than failing silently. */
+  /* Eligibility is mirrored client-side purely to explain WHY a code cannot
+     be used yet. The API re-checks it on apply, so this is a hint, not a gate. */
   const rows = useMemo(
     () =>
-      ALL_COUPONS.map((c) => {
-        const res = couponDiscount(c, subtotal, shipping);
-        return {
-          coupon: c,
-          ...res,
-          eligible: !res.reason,
-          expiring: daysLeft(c.expiresAt) <= 7,
-        };
-      }).sort((a, b) => Number(b.eligible) - Number(a.eligible)),
-    [subtotal, shipping],
+      all
+        .map((c) => {
+          const expired = new Date(c.expiresAt).getTime() < Date.now();
+          const short = subtotal < c.minOrder;
+          const reason = expired
+            ? "This code has expired"
+            : short
+              ? `Add ${inr(c.minOrder - subtotal)} more to use this code`
+              : undefined;
+
+          const raw = c.type === "percent" ? (subtotal * c.value) / 100 : c.value;
+          const discount =
+            reason || c.type === "shipping"
+              ? 0
+              : Math.round(Math.min((c.maxDiscount ?? 0) > 0 ? Math.min(raw, c.maxDiscount!) : raw, subtotal));
+
+          return {
+            coupon: c,
+            reason,
+            discount,
+            shippingWaived: !reason && c.type === "shipping" && shipping > 0,
+            eligible: !reason,
+          };
+        })
+        .sort((a, b) => Number(b.eligible) - Number(a.eligible)),
+    [all, subtotal, shipping],
   );
 
-  const applyCode = (c: Coupon) => {
-    const res = couponDiscount(c, subtotal, shipping);
-    if (res.reason) {
-      setError(res.reason);
-      return;
-    }
+  const applyCode = async (c: Coupon) => {
     setError("");
-    apply(c);
+    try {
+      await applyCoupon(c.code);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not apply that code.");
+    }
   };
 
-  const applyTyped = (e: React.FormEvent) => {
+  const applyTyped = async (e: React.FormEvent) => {
     e.preventDefault();
-    const found = ALL_COUPONS.find(
-      (c) => c.code.toLowerCase() === code.trim().toLowerCase(),
-    );
-    if (!found) {
-      setError("That code is not valid. Check the spelling and try again.");
-      return;
+    setError("");
+    try {
+      await applyCoupon(code.trim());
+      setCode("");
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "That code is not valid.");
     }
-    applyCode(found);
-    setCode("");
   };
 
   const copy = async (c: string) => {
@@ -142,16 +166,23 @@ export function CouponsView({ compact = false }: { compact?: boolean }) {
             </p>
             <p className="text-xs text-mint-700/80">{applied.title}</p>
           </div>
-          <Button variant="outline" size="sm" onClick={clear}>
+          <Button variant="outline" size="sm" onClick={() => void removeCoupon()}>
             Remove
           </Button>
         </div>
       )}
 
+      {loadingList ? (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="skeleton h-28 rounded-card" />
+          ))}
+        </div>
+      ) : (
       <ul className="space-y-3">
         {rows.map(({ coupon: c, eligible, reason, discount, shippingWaived }) => {
           const Icon = TYPE_ICON[c.type];
-          const isApplied = hydrated && applied?._id === c._id;
+          const isApplied = couponCode === c.code;
           const left = daysLeft(c.expiresAt);
 
           return (
@@ -202,7 +233,7 @@ export function CouponsView({ compact = false }: { compact?: boolean }) {
                         <Copy className="size-3 text-ink-muted" />
                       )}
                     </button>
-                    {c.isNew && (
+                    {c.featured && (
                       <span className="rounded-full bg-sky-ks/15 px-2 py-0.5 text-[10px] font-extrabold text-sky-ks">
                         NEW
                       </span>
@@ -231,7 +262,7 @@ export function CouponsView({ compact = false }: { compact?: boolean }) {
 
                 <div className="shrink-0">
                   {isApplied ? (
-                    <Button variant="outline" size="sm" onClick={clear}>
+                    <Button variant="outline" size="sm" onClick={() => void removeCoupon()}>
                       Remove
                     </Button>
                   ) : (
@@ -249,6 +280,7 @@ export function CouponsView({ compact = false }: { compact?: boolean }) {
           );
         })}
       </ul>
+      )}
 
       {!compact && (
         <p className="mt-6 text-center text-xs text-ink-muted">

@@ -6,7 +6,7 @@ import { BuyBox } from "@/components/product/BuyBox";
 import { ProductRail, SectionHeader } from "@/components/home/Section";
 import { RailSkeleton } from "@/components/ui/Skeletons";
 import { Breadcrumbs } from "@/components/ui/Breadcrumbs";
-import { Stars } from "@/components/ui/Rating";
+import { ProductReviews } from "@/components/review/ProductReviews";
 import { Check, Lightbulb, ShieldCheck } from "lucide-react";
 import { JsonLd } from "@/components/JsonLd";
 import { SurfaceTheme } from "@/lib/theme/useSurface";
@@ -112,40 +112,9 @@ export default async function ProductPage({
           )}
         </div>
 
-        <section className="mt-6 rounded-card border border-line bg-white p-6">
-          <h2 className="font-display text-lg font-extrabold">
-            Ratings &amp; Reviews
-          </h2>
-          <div className="mt-3 flex flex-wrap items-center gap-6">
-            <div className="text-center">
-              <p className="font-display text-4xl font-extrabold">
-                {product.rating.toFixed(1)}
-              </p>
-              <Stars rating={product.rating} />
-              <p className="mt-1 text-xs text-ink-muted">
-                {product.reviewCount.toLocaleString("en-IN")} ratings
-              </p>
-            </div>
-            <div className="min-w-52 flex-1 space-y-1">
-              {[5, 4, 3, 2, 1].map((star) => {
-                // Deterministic distribution — no Math.random, so SSR matches.
-                const share = [62, 24, 8, 4, 2][5 - star];
-                return (
-                  <div key={star} className="flex items-center gap-2 text-xs">
-                    <span className="w-3 text-ink-muted">{star}</span>
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
-                      <div
-                        className="h-full rounded-full bg-sun-400"
-                        style={{ width: `${share}%` }}
-                      />
-                    </div>
-                    <span className="w-8 text-right text-ink-muted">{share}%</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
+        <div className="mt-6">
+          <ProductReviews slug={product.slug} />
+        </div>
 
         <section className="mt-14">
           <SectionHeader

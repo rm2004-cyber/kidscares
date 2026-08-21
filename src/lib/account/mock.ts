@@ -1,5 +1,5 @@
 import { products } from "@/lib/data";
-import type { AccountOrder, Address, Coupon } from "./types";
+import type { AccountOrder, Address } from "./types";
 
 /**
  * Placeholder account data.
@@ -40,75 +40,7 @@ export const seedAddresses: Address[] = [
   },
 ];
 
-export const coupons: Coupon[] = [
-  {
-    _id: "cp1",
-    code: "HELLOKIDS",
-    title: "10% off your first order",
-    description: "Valid on your first KidsCares order. Applies to the full cart.",
-    type: "percent",
-    value: 10,
-    maxDiscount: 500,
-    minOrder: 499,
-    expiresAt: new Date(BASE + 30 * DAY).toISOString(),
-    isNew: true,
-  },
-  {
-    _id: "cp2",
-    code: "TOYS300",
-    title: "Flat ₹300 off on toys",
-    description: "Applies to any order from the Toys aisle above ₹1,499.",
-    type: "flat",
-    value: 300,
-    minOrder: 1499,
-    category: "toys",
-    expiresAt: new Date(BASE + 12 * DAY).toISOString(),
-  },
-  {
-    _id: "cp3",
-    code: "FREESHIP",
-    title: "Free delivery, no minimum",
-    description: "Waives the ₹49 delivery charge on any order.",
-    type: "shipping",
-    value: 0,
-    minOrder: 0,
-    expiresAt: new Date(BASE + 6 * DAY).toISOString(),
-  },
-  {
-    _id: "cp4",
-    code: "WINTER20",
-    title: "20% off winter wear",
-    description: "Jackets, sweaters and thermals. Up to ₹800 off.",
-    type: "percent",
-    value: 20,
-    maxDiscount: 800,
-    minOrder: 999,
-    category: "clothing",
-    expiresAt: new Date(BASE + 21 * DAY).toISOString(),
-  },
-  {
-    _id: "cp5",
-    code: "BULK15",
-    title: "15% off on 4+ items",
-    description: "Stocking up? Save when your bag has four or more items.",
-    type: "percent",
-    value: 15,
-    maxDiscount: 1200,
-    minOrder: 2499,
-    expiresAt: new Date(BASE + 45 * DAY).toISOString(),
-  },
-  {
-    _id: "cp6",
-    code: "NEWBORN250",
-    title: "₹250 off newborn essentials",
-    description: "Diapers, wipes and feeding, for orders above ₹1,299.",
-    type: "flat",
-    value: 250,
-    minOrder: 1299,
-    category: "daily-needs",
-    expiresAt: new Date(BASE + 9 * DAY).toISOString(),
-  },
-];
+/* Coupons now come from the API — see contentApi.getCoupons(). */
 
 const STATUSES: AccountOrder["status"][] = [
   "delivered", "out-for-delivery", "shipped", "packed", "confirmed", "cancelled",
@@ -159,9 +91,4 @@ export const ORDER_STEPS: { key: AccountOrder["status"]; label: string }[] = [
   { key: "delivered", label: "Delivered" },
 ];
 
-export const INDIAN_STATES = [
-  "Andhra Pradesh", "Assam", "Bihar", "Chhattisgarh", "Delhi", "Goa", "Gujarat",
-  "Haryana", "Himachal Pradesh", "Jharkhand", "Karnataka", "Kerala",
-  "Madhya Pradesh", "Maharashtra", "Odisha", "Punjab", "Rajasthan", "Tamil Nadu",
-  "Telangana", "Uttar Pradesh", "Uttarakhand", "West Bengal",
-];
+export { INDIAN_STATES } from "@/lib/constants";

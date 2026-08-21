@@ -4,7 +4,7 @@ import { useState } from "react";
 import { motion } from "motion/react";
 import { Check, Heart, ShoppingBag } from "lucide-react";
 import type { Product } from "@/lib/types";
-import { discountPct, inr } from "@/lib/data";
+import { discountPct, inr } from "@/lib/format";
 import { RatingBadge } from "@/components/ui/Rating";
 import { useCart } from "@/store/useCart";
 import { useWishlist } from "@/store/useWishlist";

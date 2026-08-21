@@ -3,9 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "concurrently -k -n API,WEB -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "npm --prefix server run dev",
+    "dev:web": "wait-on -t 60000 http-get://127.0.0.1:5000/api/health && next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "concurrently -k -n API,WEB -c magenta,cyan \"npm:start:api\" \"npm:start:web\"",
+    "start:api": "npm --prefix server start",
+    "start:web": "wait-on -t 60000 http-get://127.0.0.1:5000/api/health && next start",
+    "server": "npm --prefix server start",
+    "seed": "npm --prefix server run seed",
+    "seed:fresh": "npm --prefix server run seed -- --fresh",
+    "install:all": "npm install && npm --prefix server install",
     "lint": "eslint"
   },
   "dependencies": {
@@ -17,6 +25,8 @@
     "next": "16.3.1",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "server-only": "^0.0.1",
+    "socket.io-client": "^4.8.3",
     "tailwind-merge": "^3.6.0",
     "zustand": "^5.0.15"
   },
@@ -25,9 +35,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^10.0.5",
     "eslint": "^9",
     "eslint-config-next": "16.3.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.1.0"
   }
 }

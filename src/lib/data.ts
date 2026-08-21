@@ -6,6 +6,53 @@ import type {
   Deal,
   Product,
 } from "./types";
+import { serverApi } from "./server-api";
+
+/**
+ * Normalises an API document to the shape the UI expects.
+ *
+ * Mongo stores images as `{ url, publicId }` objects so Cloudinary ids can be
+ * deleted later; every component here works in plain URL strings. Converting
+ * once at this boundary keeps that difference out of the components — and
+ * prevents `absoluteUrl(object)` blowing up in the JSON-LD builder.
+ */
+function normaliseProduct(p: unknown): Product {
+  const raw = p as Product & { images?: unknown };
+  const images = Array.isArray(raw.images)
+    ? raw.images
+        .map((i) => (typeof i === "string" ? i : (i as { url?: string })?.url))
+        .filter((u): u is string => Boolean(u))
+    : [];
+  return { ...raw, images };
+}
+
+function normaliseCategory(c: unknown): Category {
+  const raw = c as Category & { image?: unknown };
+  const image =
+    typeof raw.image === "string" ? raw.image : ((raw.image as { url?: string })?.url ?? "");
+  return { ...raw, image };
+}
+
+function normaliseBrand(b: unknown): Brand {
+  const raw = b as Brand & { logo?: unknown };
+  const logo =
+    typeof raw.logo === "string" ? raw.logo : ((raw.logo as { url?: string })?.url ?? "");
+  return { ...raw, logo };
+}
+
+function normaliseBanner(b: unknown): Banner {
+  const raw = b as Banner & { image?: unknown };
+  const image =
+    typeof raw.image === "string" ? raw.image : ((raw.image as { url?: string })?.url ?? "");
+  return { ...raw, image };
+}
+
+function normaliseDeal(d: unknown): Deal {
+  const raw = d as Deal & { image?: unknown };
+  const image =
+    typeof raw.image === "string" ? raw.image : ((raw.image as { url?: string })?.url ?? "");
+  return { ...raw, image };
+}
 
 /**
  * Mock repository.
@@ -294,43 +341,57 @@ export const deals: Deal[] = [
 /* Signatures below are what the Mongoose layer will implement verbatim. */
 
 export async function getTopCategories(): Promise<Category[]> {
-  return topCategories;
+  const live = await serverApi.categories();
+  if (!live) return topCategories;
+  return (live as unknown[]).map(normaliseCategory).filter((c) => c.parent === null);
 }
 
 export async function getCategoryBySlug(slug: string): Promise<Category | null> {
+  const live = await serverApi.category(slug);
+  if (live) return normaliseCategory((live as { category: unknown }).category);
   return categories.find((c) => c.slug === slug) ?? null;
 }
 
 export async function getSubcategories(parentSlug: string): Promise<Category[]> {
-  return categories.filter((c) => c.parent === parentSlug);
+  const live = await serverApi.categories();
+  if (!live) return categories.filter((c) => c.parent === parentSlug);
+  return (live as unknown[]).map(normaliseCategory).filter((c) => c.parent === parentSlug);
 }
 
 export async function getAllCategories(): Promise<Category[]> {
-  return categories;
+  const live = await serverApi.categories();
+  return live ? (live as unknown[]).map(normaliseCategory) : categories;
 }
 
 export async function getBanners(): Promise<Banner[]> {
-  return banners;
+  const live = await serverApi.banners("hero");
+  return live?.length ? (live as unknown[]).map(normaliseBanner) : banners;
 }
 
 export async function getDeals(): Promise<Deal[]> {
-  return deals;
+  const live = await serverApi.deals();
+  return live?.length ? (live as unknown[]).map(normaliseDeal) : deals;
 }
 
 export async function getBrands(): Promise<Brand[]> {
-  return brands;
+  const live = await serverApi.brands();
+  return live?.length ? (live as unknown[]).map(normaliseBrand) : brands;
 }
 
 export async function getAgeGroups(): Promise<AgeGroup[]> {
-  return ageGroups;
+  const live = await serverApi.ageGroups();
+  return live?.length ? (live as unknown as AgeGroup[]) : ageGroups;
 }
 
 export async function getProductBySlug(slug: string): Promise<Product | null> {
+  const live = await serverApi.product(slug);
+  if (live) return normaliseProduct((live as { product: unknown }).product);
   return products.find((p) => p.slug === slug) ?? null;
 }
 
 export async function getAllProducts(): Promise<Product[]> {
-  return products;
+  const live = await serverApi.products({ limit: 100 });
+  return live?.data?.length ? live.data.map(normaliseProduct) : products;
 }
 
 export type ProductQuery = {
@@ -345,6 +406,10 @@ export type ProductQuery = {
 };
 
 export async function getProducts(query: ProductQuery = {}): Promise<Product[]> {
+  const live = await serverApi.products({ ...query, limit: 100 });
+  if (live?.data) return live.data.map(normaliseProduct);
+
+  // Fallback: the same filtering, applied to the seed data.
   let out = [...products];
 
   if (query.category) {
@@ -385,6 +450,10 @@ export async function getRelatedProducts(
   product: Product,
   limit = 6,
 ): Promise<Product[]> {
+  const live = await serverApi.product(product.slug);
+  const related = (live as { related?: unknown[] } | null)?.related;
+  if (related?.length) return related.slice(0, limit).map(normaliseProduct);
+
   const parent = product.categorySlug.split("/")[0];
   return products
     .filter((p) => p._id !== product._id && p.categorySlug.startsWith(parent))
@@ -405,11 +474,7 @@ export async function getSearchSuggestions(q: string): Promise<string[]> {
 
 /* ------------------------------------------------------------- helpers */
 
-export const discountPct = (mrp: number, price: number) =>
-  Math.round(((mrp - price) / mrp) * 100);
-
-export const inr = (n: number) =>
-  `₹${n.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+export { discountPct, inr } from "./format";
 
 export function categoryTrail(slug: string): Category[] {
   const parts = slug.split("/");

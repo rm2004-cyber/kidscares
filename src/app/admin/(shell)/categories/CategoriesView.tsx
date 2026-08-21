@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
 import { ChevronRight, Folder, Pencil, Plus, Search, Trash2, X } from "lucide-react";
@@ -18,29 +18,53 @@ import {
 import { ImageManager } from "@/components/admin/ImageManager";
 import { SeoEditor, type SeoValue } from "@/components/admin/SeoEditor";
 import type { Category } from "@/lib/types";
+import { adminApi, ApiError } from "@/utils/service";
+import { toMedia, type MediaItem } from "@/lib/media";
 import { cn } from "@/lib/utils";
 
 const ACCENTS = ["brand", "mint", "sun", "grape", "sky"];
 
-type Row = Category & { seoValue: SeoValue };
+type Row = Omit<Category, "image"> & { image?: MediaItem; seoValue: SeoValue };
 
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9/]+/g, "-").replace(/^-|-$/g, "");
 
-export function CategoriesView({ categories }: { categories: Category[] }) {
-  const [rows, setRows] = useState<Row[]>(
-    categories.map((c) => ({
-      ...c,
-      seoValue: {
-        title: c.seo?.title ?? "",
-        description: c.seo?.description ?? "",
-        keywords: c.seo?.keywords ?? [],
-        canonical: c.seo?.canonical ?? "",
-        index: c.seo?.index ?? true,
-        follow: c.seo?.follow ?? true,
-      },
-    })),
-  );
+const withSeo = (raw: unknown): Row => {
+  const c = raw as Category & { image?: unknown };
+  return {
+  ...c,
+  image: toMedia(c.image)[0],
+  seoValue: {
+    title: c.seo?.title ?? "",
+    description: c.seo?.description ?? "",
+    keywords: c.seo?.keywords ?? [],
+    canonical: c.seo?.canonical ?? "",
+    index: c.seo?.index ?? true,
+    follow: c.seo?.follow ?? true,
+  },
+  };
+};
+
+export function CategoriesView() {
+  const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const list = (await adminApi.listCategories()) as unknown[];
+      setRows((list ?? []).map(withSeo));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not load categories.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<string[]>([]);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -62,27 +86,59 @@ export function CategoriesView({ categories }: { categories: Category[] }) {
     slug: "",
     name: "",
     parent,
-    image: "",
+    image: undefined,
     accent: "brand",
     productCount: 0,
     blurb: "",
     seoValue: { title: "", description: "", keywords: [], canonical: "", index: true, follow: true },
   });
 
-  const upsert = (row: Row) => {
-    setRows((prev) =>
-      prev.some((r) => r._id === row._id)
-        ? prev.map((r) => (r._id === row._id ? row : r))
-        : [...prev, row],
-    );
-    setEditing(null);
+  const upsert = async (row: Row) => {
+    const payload = {
+      name: row.name,
+      slug: row.slug,
+      parent: row.parent,
+      blurb: row.blurb,
+      glyph: row.glyph,
+      accent: row.accent,
+      seo: row.seoValue,
+      ...(row.image ? { image: row.image } : {}),
+    };
+
+    setError("");
+    try {
+      // A brand-new row still carries the client-side id it was created with,
+      // so existence is decided by whether the server already knows it.
+      const known = rows.some((r) => r._id === row._id) && !row._id.startsWith("c1");
+      if (known && !row._id.startsWith("c")) {
+        await adminApi.updateCategory(row._id, payload);
+      } else if (/^[a-f\d]{24}$/i.test(row._id)) {
+        await adminApi.updateCategory(row._id, payload);
+      } else {
+        await adminApi.createCategory(payload);
+      }
+      setEditing(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not save.");
+    }
+  };
+
+  const remove = async (id: string) => {
+    setError("");
+    try {
+      await adminApi.deleteCategory(id);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not delete.");
+    }
   };
 
   return (
     <>
       <PageHeader
         title="Categories"
-        subtitle={`${rows.length} categories · ${tops.length} top-level aisles`}
+        subtitle={loading ? "Loading…" : `${rows.length} categories · ${tops.length} top-level aisles`}
         actions={
           <Button size="sm" onClick={() => setEditing(blank())}>
             <Plus className="size-4" />
@@ -90,6 +146,12 @@ export function CategoriesView({ categories }: { categories: Category[] }) {
           </Button>
         }
       />
+
+      {error && (
+        <p className="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {error}
+        </p>
+      )}
 
       <Card bodyClassName="p-3 sm:p-3" className="mb-3">
         <label className="relative flex items-center">
@@ -133,7 +195,7 @@ export function CategoriesView({ categories }: { categories: Category[] }) {
 
                 <span className="relative size-11 shrink-0 overflow-hidden rounded-xl bg-cream">
                   {c.image ? (
-                    <Image src={c.image} alt="" fill unoptimized sizes="44px" className="object-cover" />
+                    <Image src={c.image?.url ?? ""} alt="" fill unoptimized sizes="44px" className="object-cover" />
                   ) : (
                     <span className="grid size-full place-items-center"><Folder className="size-5 text-ink-muted" /></span>
                   )}
@@ -163,7 +225,7 @@ export function CategoriesView({ categories }: { categories: Category[] }) {
                   <IconBtn
                     label="Delete"
                     danger
-                    onClick={() => setRows((prev) => prev.filter((r) => r._id !== c._id))}
+                    onClick={() => void remove(c._id)}
                   >
                     <Trash2 className="size-4" />
                   </IconBtn>
@@ -196,7 +258,7 @@ export function CategoriesView({ categories }: { categories: Category[] }) {
                         <IconBtn
                           label="Delete"
                           danger
-                          onClick={() => setRows((prev) => prev.filter((r) => r._id !== k._id))}
+                          onClick={() => void remove(k._id)}
                         >
                           <Trash2 className="size-3.5" />
                         </IconBtn>
@@ -330,8 +392,8 @@ function CategorySheet({
               <div>
                 <p className="mb-2 text-xs font-bold text-ink">Category image</p>
                 <ImageManager
-                  images={draft.image ? [draft.image] : []}
-                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? "" })}
+                  images={toMedia(draft.image)}
+                  onChange={(next) => setDraft({ ...draft, image: next[0] ?? undefined })}
                   max={1}
                 />
               </div>

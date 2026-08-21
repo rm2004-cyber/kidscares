@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -26,26 +27,63 @@ import {
 } from "./ui";
 import { ImageManager } from "./ImageManager";
 import { SeoEditor, type SeoValue } from "./SeoEditor";
-import { discountPct, inr } from "@/lib/data";
-import {
-  slugify,
-  type ProductFormValue,
-} from "@/lib/admin/productForm";
+import { discountPct, inr } from "@/lib/format";
+import { slugify, type ProductFormValue } from "@/lib/admin/productForm";
+import { adminApi, ApiError } from "@/utils/service";
 
 export function ProductForm({
   initial,
   mode,
-  brands,
-  categories,
-  ageGroups,
+  productId,
 }: {
   initial: ProductFormValue;
   mode: "create" | "edit";
-  brands: string[];
-  categories: { slug: string; name: string }[];
-  ageGroups: { slug: string; label: string }[];
+  /** Required in edit mode — the document being PATCHed. */
+  productId?: string;
 }) {
+  const router = useRouter();
+
+  const [brands, setBrands] = useState<string[]>([]);
+  const [categories, setCategories] = useState<{ slug: string; name: string }[]>([]);
+  const [ageGroups, setAgeGroups] = useState<{ slug: string; label: string }[]>([]);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
+
   const [v, setV] = useState<ProductFormValue>(initial);
+
+  /* The pickers are loaded from the API so a brand or category added moments
+     ago is selectable here without a redeploy. */
+  useEffect(() => {
+    adminApi
+      .listBrands()
+      .then((b) => setBrands(((b ?? []) as { name: string }[]).map((x) => x.name)))
+      .catch(() => {});
+
+    adminApi
+      .listCategories()
+      .then((c) => {
+        const all = (c ?? []) as { slug: string; name: string; parent: string | null }[];
+        // Products attach to leaf categories only, never to a top-level aisle
+        // that has children of its own.
+        const leaves = all.filter(
+          (x) => x.parent !== null || !all.some((y) => y.parent === x.slug),
+        );
+        setCategories(leaves.map((x) => ({ slug: x.slug, name: x.name })));
+      })
+      .catch(() => {});
+
+    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"}/api/age-groups`)
+      .then((r) => r.json())
+      .then((j) =>
+        setAgeGroups(
+          ((j?.data ?? []) as { slug: string; label: string }[]).map((a) => ({
+            slug: a.slug,
+            label: a.label,
+          })),
+        ),
+      )
+      .catch(() => {});
+  }, []);
   const [slugTouched, setSlugTouched] = useState(mode === "edit");
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
@@ -71,16 +109,58 @@ export function ProductForm({
     return Object.keys(e).length === 0;
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!validate()) {
       document.querySelector("[data-error]")?.scrollIntoView({ block: "center" });
       return;
     }
-    // Persistence lands with the backend phase; the payload is already final.
-    console.log("product payload", v);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2600);
+
+    setSaving(true);
+    setSaveError("");
+
+    /* Images are stored as objects so Cloudinary's public_id can travel with
+       the URL — the plain strings the picker produces are widened here. */
+    const payload = {
+      ...v,
+      badge: v.badge || undefined,
+      // Already MediaItem[] — publicId travels with the URL so the asset can
+      // be deleted from Cloudinary if the product is removed later.
+      images: v.images,
+      seo: {
+        ...v.seo,
+        title: v.seo.title || undefined,
+        description: v.seo.description || undefined,
+        canonical: v.seo.canonical || undefined,
+      },
+    };
+
+    try {
+      if (mode === "edit" && productId) {
+        await adminApi.updateProduct(productId, payload);
+      } else {
+        const created = await adminApi.createProduct(payload);
+        router.replace(`/admin/products/${created._id}`);
+      }
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2600);
+    } catch (err) {
+      setSaveError(
+        err instanceof ApiError ? err.message : "Could not save this product.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    if (!productId) return;
+    try {
+      await adminApi.deleteProduct(productId);
+      router.replace("/admin/products");
+    } catch (err) {
+      setSaveError(err instanceof ApiError ? err.message : "Could not delete.");
+    }
   };
 
   return (
@@ -108,9 +188,9 @@ export function ProductForm({
                 </Button>
               </Link>
             )}
-            <Button size="sm" type="submit">
+            <Button size="sm" type="submit" disabled={saving}>
               <Save className="size-4" />
-              {saved ? "Saved" : "Save product"}
+              {saving ? "Saving…" : saved ? "Saved" : "Save product"}
             </Button>
           </>
         }
@@ -118,8 +198,13 @@ export function ProductForm({
 
       {saved && (
         <div className="mb-4 rounded-xl border border-mint-200 bg-mint-50 px-4 py-2.5 text-sm font-semibold text-mint-700">
-          Payload validated and logged to the console — wiring to MongoDB is the
-          next phase.
+          Saved. The storefront picks this up on its next revalidation.
+        </div>
+      )}
+
+      {saveError && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-semibold text-red-600">
+          {saveError}
         </div>
       )}
 
@@ -363,12 +448,12 @@ export function ProductForm({
               </p>
               <div className="rounded-xl border border-line bg-white p-2.5">
                 <div className="mb-2 aspect-[4/5] overflow-hidden rounded-lg bg-cream">
-                  {v.images[0] ? (
+                  {v.images[0]?.url ? (
                     // Blob URLs from the local uploader cannot go through
                     // next/image, so the preview uses a plain img.
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
-                      src={v.images[0]}
+                      src={v.images[0].url}
                       alt=""
                       className="size-full object-cover"
                     />
@@ -420,7 +505,13 @@ export function ProductForm({
                 Deleting removes the product and its URL. Any inbound links will
                 start returning 404 unless you add a redirect.
               </p>
-              <Button variant="danger" size="sm" type="button" className="w-full">
+              <Button
+                variant="danger"
+                size="sm"
+                type="button"
+                className="w-full"
+                onClick={remove}
+              >
                 <Trash2 className="size-3.5" />
                 Delete product
               </Button>

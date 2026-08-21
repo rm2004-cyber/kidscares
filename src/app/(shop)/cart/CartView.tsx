@@ -4,18 +4,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
 import { Lock, Minus, Plus, Trash2 } from "lucide-react";
-import { cartTotals, lineKey, useCart } from "@/store/useCart";
+import { lineKey, useCart } from "@/store/useCart";
 import { useHydrated } from "@/lib/useHydrated";
 import { loginHref, useAuth } from "@/store/useAuth";
-import { inr } from "@/lib/data";
+import { inr } from "@/lib/format";
 import { Glyph } from "@/components/ui/Glyph";
 import { ProductGridSkeleton } from "@/components/ui/Skeletons";
 
 export function CartView() {
-  const mounted = useHydrated();
-  const { lines, remove, setQty } = useCart();
+  const { lines, totals, remove, setQty, loaded } = useCart();
+  const mounted = useHydrated() && loaded;
   const user = useAuth((s) => s.user);
-  const { subtotal, savings, shipping, total, count } = cartTotals(lines);
+  const { subtotal, savings, shipping, total, count } = totals;
 
   if (!mounted) {
     return (
@@ -94,7 +94,7 @@ export function CartView() {
                     <div className="mt-auto flex flex-wrap items-center justify-between gap-3 pt-3">
                       <div className="flex items-center rounded-full border border-line">
                         <button
-                          onClick={() => setQty(key, l.qty - 1)}
+                          onClick={() => void setQty(l, l.qty - 1)}
                           aria-label="Decrease quantity"
                           className="grid size-8 place-items-center"
                         >
@@ -104,7 +104,7 @@ export function CartView() {
                           {l.qty}
                         </span>
                         <button
-                          onClick={() => setQty(key, l.qty + 1)}
+                          onClick={() => void setQty(l, l.qty + 1)}
                           aria-label="Increase quantity"
                           className="grid size-8 place-items-center"
                         >
@@ -117,7 +117,7 @@ export function CartView() {
                           {inr(l.price * l.qty)}
                         </span>
                         <button
-                          onClick={() => remove(key)}
+                          onClick={() => void remove(l)}
                           aria-label={`Remove ${l.title}`}
                           className="text-ink-muted transition hover:text-brand-500"
                         >

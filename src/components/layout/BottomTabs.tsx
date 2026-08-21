@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { motion } from "motion/react";
 import { Heart, Home, Search, ShoppingBag, User } from "lucide-react";
-import { cartTotals, useCart } from "@/store/useCart";
+import { useCart } from "@/store/useCart";
 import { useWishlist } from "@/store/useWishlist";
 import { useHydrated } from "@/lib/useHydrated";
 import { cn } from "@/lib/utils";
@@ -33,9 +33,8 @@ export function BottomTabs() {
   const pathname = usePathname();
   const mounted = useHydrated();
 
-  const lines = useCart((s) => s.lines);
-  const wishlistIds = useWishlist((s) => s.ids);
-  const { count } = cartTotals(lines);
+  const count = useCart((s) => s.totals.count);
+  const wishlistCount = useWishlist((s) => s.ids.length);
 
   if (HIDE_ON.some((p) => pathname.startsWith(p))) return null;
 
@@ -48,7 +47,7 @@ export function BottomTabs() {
   const badgeFor = (href: string) => {
     if (!mounted) return 0;
     if (href === "/cart") return count;
-    if (href === "/wishlist") return wishlistIds.length;
+    if (href === "/wishlist") return wishlistCount;
     return 0;
   };
 

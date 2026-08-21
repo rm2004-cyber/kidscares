@@ -1,8 +1,7 @@
-import { SettingsView } from "./SettingsView";
-import { defaultSettings } from "@/lib/admin/mock";
+import { AdminSettingsView } from "./SettingsView";
 
 export const metadata = { title: "Settings" };
 
 export default function AdminSettingsPage() {
-  return <SettingsView initial={defaultSettings} />;
+  return <AdminSettingsView />;
 }

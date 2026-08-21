@@ -1,6 +1,5 @@
 "use client";
 
-import { useMemo } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Eye,
@@ -36,42 +35,8 @@ const EVENT_STYLE: Record<
 const DEVICE_ICON = { mobile: Smartphone, desktop: Monitor, tablet: Tablet };
 
 export function LiveTrafficView() {
-  const { connected, visitors, events, history } = useLiveFeed();
-
-  /* Aggregations are derived, never stored — the visitor list is the single
-     source of truth, exactly as it will be when it arrives over the socket. */
-  const byPage = useMemo(() => {
-    const map = new Map<string, { title: string; path: string; count: number }>();
-    for (const v of visitors) {
-      const hit = map.get(v.path);
-      if (hit) hit.count++;
-      else map.set(v.path, { title: v.title, path: v.path, count: 1 });
-    }
-    return [...map.values()].sort((a, b) => b.count - a.count);
-  }, [visitors]);
-
-  const byCity = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const v of visitors) map.set(v.city, (map.get(v.city) ?? 0) + 1);
-    return [...map.entries()]
-      .map(([city, count]) => ({ city, count }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, [visitors]);
-
-  const byReferrer = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const v of visitors) map.set(v.referrer, (map.get(v.referrer) ?? 0) + 1);
-    return [...map.entries()]
-      .map(([source, count]) => ({ source, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [visitors]);
-
-  const devices = useMemo(() => {
-    const d = { mobile: 0, desktop: 0, tablet: 0 };
-    for (const v of visitors) d[v.device]++;
-    return d;
-  }, [visitors]);
+  const { connected, visitors, events, history, byPath, byCity, byReferrer, byDevice } =
+    useLiveFeed();
 
   const inCart = visitors.filter((v) => v.path === "/cart").length;
   const onProduct = visitors.filter((v) => v.path.startsWith("/product/")).length;
@@ -203,7 +168,7 @@ export function LiveTrafficView() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line">
-                  {byPage.slice(0, 8).map((p) => (
+                  {byPath.slice(0, 8).map((p) => (
                     <tr key={p.path}>
                       <Td>
                         <p className="truncate text-xs font-semibold">{p.title}</p>
@@ -215,7 +180,7 @@ export function LiveTrafficView() {
                             <span
                               className="block h-full rounded-full bg-mint-400"
                               style={{
-                                width: `${(p.count / (byPage[0]?.count || 1)) * 100}%`,
+                                width: `${(p.count / (byPath[0]?.count || 1)) * 100}%`,
                               }}
                             />
                           </span>
@@ -231,9 +196,9 @@ export function LiveTrafficView() {
 
           <Card title="Devices">
             <div className="grid grid-cols-3 gap-2">
-              {(Object.keys(devices) as (keyof typeof devices)[]).map((k) => {
+              {(["mobile", "desktop", "tablet"] as const).map((k) => {
                 const Icon = DEVICE_ICON[k];
-                const pct = Math.round((devices[k] / Math.max(visitors.length, 1)) * 100);
+                const pct = Math.round((byDevice[k] / Math.max(visitors.length, 1)) * 100);
                 return (
                   <div key={k} className="rounded-xl bg-cream p-3 text-center">
                     <Icon className="mx-auto size-4 text-ink-soft" />

@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { WishlistView } from "./WishlistView";
-import { getAllProducts } from "@/lib/data";
 
 export const metadata: Metadata = {
   title: "Your Wishlist",
@@ -9,9 +8,6 @@ export const metadata: Metadata = {
   robots: { index: false, follow: true },
 };
 
-export default async function WishlistPage() {
-  // The full catalogue is passed down and filtered client-side against the
-  // persisted id list; wishlist state lives in localStorage, not on the server.
-  const products = await getAllProducts();
-  return <WishlistView products={products} />;
+export default function WishlistPage() {
+  return <WishlistView />;
 }
