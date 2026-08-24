@@ -179,6 +179,11 @@ export const accountApi = {
 
 /* ─────────────────────────────── returns ──────────────────────────────── */
 
+export const trackingApi = {
+  /** Public: keyed by order number so an emailed link works without sign-in. */
+  byOrderNo: (orderNo) => get(`/orders/${orderNo}/track`),
+};
+
 export const returnApi = {
   /** Which lines can still be returned, and why not if they cannot. */
   context: (orderId) => get(`/me/orders/${orderId}/return`),
@@ -289,6 +294,27 @@ export const adminApi = {
   updateSettings: (payload) => patch("/admin/settings", payload),
 
   /* ── review moderation ── */
+  /* ── fulfilment ── */
+  /**
+   * @param {string} id
+   * @param {string} [note]
+   */
+  acceptOrder: (id, note) => post(`/admin/orders/${id}/accept`, { note }),
+  /**
+   * @param {string} id
+   * @param {{weightKg:number,lengthCm:number,breadthCm:number,heightCm:number}} parcel
+   * @param {string} [note]
+   */
+  packOrder: (id, parcel, note) => post(`/admin/orders/${id}/pack`, { parcel, note }),
+  courierOptions: (id) => get(`/admin/orders/${id}/courier-options`),
+  bookShipment: (id, courierId) => post(`/admin/orders/${id}/book-shipment`, { courierId }),
+  orderTimeline: (id) => get(`/admin/orders/${id}/timeline`),
+
+  /* ── finance ── */
+  finance: () => get("/admin/payments/finance"),
+  syncSettlements: () => post("/admin/payments/settlements/sync"),
+  orderReceipt: (id) => get(`/admin/orders/${id}/receipt`),
+
   /* ── returns ── */
   listReturns: (query = {}) => get("/admin/returns", { params: query, raw: true }),
   resolveReturn: (id, { approve, note }) =>
@@ -365,6 +391,7 @@ export default {
   wishlistApi,
   reviewApi,
   returnApi,
+  trackingApi,
   paymentApi,
   supportApi,
   adminApi,

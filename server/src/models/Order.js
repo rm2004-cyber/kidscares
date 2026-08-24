@@ -1,15 +1,46 @@
 import mongoose from "mongoose";
 
 export const ORDER_STATUSES = [
+  /* ── ours: the admin moves the order through these ── */
   "placed",
   "confirmed",
   "packed",
+  /* Booked with a courier but not yet collected. Deliberately distinct from
+     "shipped": a booking is a promise, a pickup scan is a fact, and telling a
+     customer their parcel shipped before anyone touched it is how tracking
+     loses their trust. */
+  "shipment-booked",
+
+  /* ── the courier's: only tracking events may set these ── */
   "shipped",
   "in-transit",
   "out-for-delivery",
   "delivered",
+  "delivery-failed",
+  "rto-initiated",
+  "rto-in-transit",
+  "rto-delivered",
+
+  /* ── terminal ── */
   "cancelled",
   "returned",
+  /** Legacy coarse RTO status, kept so older orders still validate. */
+  "rto",
+];
+
+/**
+ * Statuses no admin may set by hand — they are facts reported by the courier.
+ * Writing them from the dashboard would let a guess overwrite a real scan.
+ */
+export const COURIER_OWNED = [
+  "shipped",
+  "in-transit",
+  "out-for-delivery",
+  "delivered",
+  "delivery-failed",
+  "rto-initiated",
+  "rto-in-transit",
+  "rto-delivered",
   "rto",
 ];
 
@@ -21,6 +52,18 @@ export const ORDER_STATUSES = [
  * it here would let the dashboard overwrite a live Shiprocket scan.
  */
 export const ADMIN_CONTROLLED = ["placed", "confirmed", "packed"];
+
+/** Ordered for progress bars — index says how far along an order is. */
+export const STATUS_ORDER = [
+  "placed",
+  "confirmed",
+  "packed",
+  "shipment-booked",
+  "shipped",
+  "in-transit",
+  "out-for-delivery",
+  "delivered",
+];
 
 /** A customer may cancel only before the parcel is handed to the courier. */
 export const CANCELLABLE = ["placed", "confirmed", "packed"];
@@ -152,6 +195,32 @@ const orderSchema = new mongoose.Schema(
 
     eta: Date,
     cancelledReason: String,
+    /* ── fulfilment: who did what, and when ── */
+    acceptedAt: Date,
+    acceptedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+    acceptedByName: String,
+
+    packedAt: Date,
+    packedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Admin" },
+    packedByName: String,
+
+    /**
+     * Measured at packing, before any courier is quoted.
+     *
+     * Courier pricing is billed on the greater of actual and volumetric
+     * weight, so a guess here becomes a billing dispute later. Editable until
+     * the shipment is booked, frozen after.
+     */
+    parcel: {
+      weightKg: { type: Number, default: 0.5 },
+      lengthCm: { type: Number, default: 15 },
+      breadthCm: { type: Number, default: 12 },
+      heightCm: { type: Number, default: 8 },
+    },
+
+    /** Convenience pointer to the live shipment; history lives in Shipment. */
+    shipment: { type: mongoose.Schema.Types.ObjectId, ref: "Shipment" },
+
     cancelledBy: { type: String, enum: ["customer", "admin", "system", ""], default: "" },
     cancelledAt: Date,
 

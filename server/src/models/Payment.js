@@ -56,6 +56,18 @@ const paymentSchema = new mongoose.Schema(
     ],
     refundedAmount: { type: Number, default: 0 },
 
+    /**
+     * Razorpay's cut, in rupees. Without these, "collected" and "what actually
+     * reaches the bank" differ by 2%-ish and every settlement figure is wrong.
+     * Only present once a payment is captured.
+     */
+    fee: { type: Number, default: 0 },
+    tax: { type: Number, default: 0 },
+
+    /** Set when a settlement claims this payment. */
+    settlementId: { type: String, index: true },
+    settledAt: Date,
+
     capturedAt: Date,
     failedAt: Date,
 

@@ -104,6 +104,16 @@ export const list = asyncHandler(async (req, res) => {
 });
 
 /** Manual refund from the payments panel. */
+/** Balance, settlements and refund states for the finance screen. */
+export const finance = asyncHandler(async (req, res) =>
+  ok(res, await razorpayService.financeSummary()),
+);
+
+/** Pulls settlements from Razorpay on demand — the panel's refresh button. */
+export const syncSettlements = asyncHandler(async (req, res) =>
+  ok(res, await razorpayService.syncSettlements()),
+);
+
 export const refund = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.body.orderId);
   if (!order) throw ApiError.notFound("Order not found");

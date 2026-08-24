@@ -590,6 +590,121 @@ export function sendOrderDeliveredEmail({ to, order, customerName }) {
   });
 }
 
+/* ─────────────────────── shipment booked / in flight ───────────────────── */
+
+/**
+ * Sent when a courier is booked — before anyone has collected the parcel.
+ *
+ * Says "booked", never "shipped": the difference matters to someone watching
+ * their tracking, and overstating it once costs more trust than it buys.
+ */
+export function sendShipmentBookedEmail({ to, order, shipment }) {
+  return deliver({
+    to,
+    subject: `Order ${order.orderNo} is booked for shipping`,
+    text: `Your order ${order.orderNo} is booked with ${shipment.courierName ?? "a courier"}. Tracking number ${shipment.awb}.`,
+    html: layout({
+      preheader: `${shipment.courierName ?? "Courier"} · ${shipment.awb}`,
+      heading: "Your order is booked for shipping",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          <b style="color:${C.ink}">${order.orderNo}</b> is packed and booked with
+          a courier. We will email you again the moment they collect it.
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="background:${C.cream};border:1px solid ${C.line};border-radius:14px;margin-bottom:16px">
+          <tr><td style="padding:14px 16px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Courier", shipment.courierName ?? "Assigned")}
+              ${row("Tracking number", shipment.awb ?? "—")}
+              ${shipment.estimatedDays ? row("Estimated delivery", `${shipment.estimatedDays} day(s)`) : ""}
+            </table>
+          </td></tr>
+        </table>
+
+        ${button(`${env.siteUrl}/orders/${order.orderNo}/track`, "Track this order")}
+
+        <p style="margin:0;font-size:11px;color:${C.muted}">
+          Tracking usually shows its first scan once the courier has collected
+          the parcel.
+        </p>`,
+    }),
+  });
+}
+
+export function sendOutForDeliveryEmail({ to, order, tracking }) {
+  return deliver({
+    to,
+    subject: `Out for delivery — ${order.orderNo}`,
+    text: `Your order ${order.orderNo} is out for delivery today.`,
+    html: layout({
+      preheader: "Arriving today",
+      heading: "Out for delivery today",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          <b style="color:${C.ink}">${order.orderNo}</b> is on the van and should
+          reach you today.
+        </p>
+
+        ${
+          order.payment?.method === "cod"
+            ? `<div style="padding:12px 14px;background:${C.brandSoft};border-radius:12px;margin-bottom:16px">
+                 <p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+                   <b style="color:${C.ink}">Please keep ${inr(order.total)} ready</b> —
+                   this order is cash on delivery.
+                 </p>
+               </div>`
+            : ""
+        }
+
+        ${button(`${env.siteUrl}/orders/${order.orderNo}/track`, "Track this order")}
+
+        <p style="margin:0;font-size:12px;line-height:1.6;color:${C.soft}">
+          ${tracking?.courier ?? "The courier"} may call you on the number on the
+          order, so keep your phone nearby.
+        </p>`,
+    }),
+  });
+}
+
+/**
+ * A failed attempt needs a message, not silence: it is almost always something
+ * the customer can fix, and a parcel goes back to the seller after a few
+ * unanswered attempts.
+ */
+export function sendDeliveryFailedEmail({ to, order, tracking }) {
+  return deliver({
+    to,
+    subject: `We could not deliver ${order.orderNo}`,
+    text: `A delivery attempt for ${order.orderNo} did not succeed. The courier will try again.`,
+    html: layout({
+      preheader: "The courier will try again",
+      heading: "We could not deliver your order",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          ${tracking?.courier ?? "The courier"} tried to deliver
+          <b style="color:${C.ink}">${order.orderNo}</b> and could not complete it.
+          They will attempt again on the next working day.
+        </p>
+
+        <div style="padding:12px 14px;background:${C.brandSoft};border-radius:12px;margin-bottom:16px">
+          <p style="margin:0;font-size:12px;line-height:1.6;color:${C.soft}">
+            <b style="color:${C.ink}">This usually helps:</b> keep the phone on the
+            order reachable, and let us know if the address needs a landmark.
+            After a few failed attempts the parcel is sent back to us.
+          </p>
+        </div>
+
+        ${button(`${env.siteUrl}/orders/${order.orderNo}/track`, "Track this order")}
+
+        <p style="margin:0;font-size:12px;line-height:1.6;color:${C.soft}">
+          Need to change something? Reply to this email and we will sort it out.
+        </p>`,
+    }),
+  });
+}
+
 /* ───────────────────────── return approved ────────────────────────────── */
 
 export function sendReturnApprovedEmail({ to, order, request, pickup }) {
@@ -700,6 +815,9 @@ export const mailer = {
   sendOtpEmail,
   sendOrderConfirmationEmail,
   sendOrderShippedEmail,
+  sendShipmentBookedEmail,
+  sendOutForDeliveryEmail,
+  sendDeliveryFailedEmail,
   sendOrderCancelledEmail,
   sendOrderDeliveredEmail,
   sendReturnApprovedEmail,

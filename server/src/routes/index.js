@@ -7,7 +7,7 @@ import contentRoutes from "./content.routes.js";
 import adminRoutes from "./admin.routes.js";
 import paymentRoutes from "./payment.routes.js";
 import supportRoutes from "./support.routes.js";
-import * as shipments from "../controllers/shipment.controller.js";
+import * as fulfil from "../controllers/fulfilment.controller.js";
 
 const router = Router();
 
@@ -20,8 +20,9 @@ router.use("/cart", cartRoutes);
 router.use("/payments", paymentRoutes);
 router.use("/support", supportRoutes);
 
-/* Shiprocket posts here on every scan. Unsigned by design — see the handler. */
-router.post("/webhooks/shiprocket", shipments.webhook);
+/* Shiprocket posts here on every courier scan. Authenticated with the static
+   x-api-key configured in their dashboard — see the handler. */
+router.post("/webhooks/shiprocket", fulfil.shiprocketWebhook);
 router.use("/me", userRoutes);
 router.use("/admin", adminRoutes);
 /* Content and catalogue mount at the root so the public URLs stay flat:

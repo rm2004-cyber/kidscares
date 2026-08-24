@@ -4,6 +4,7 @@ import { logger } from "../config/logger.js";
 import { ApiError } from "../utils/ApiError.js";
 import { Payment } from "../models/Payment.js";
 import { Order } from "../models/Order.js";
+import { Settlement } from "../models/Settlement.js";
 
 /**
  * Razorpay integration.
@@ -254,6 +255,8 @@ export async function handleWebhookEvent(event) {
           contact: entity.contact,
           orderNo: entity.notes?.orderNo,
           capturedAt: event.event === "payment.captured" ? new Date() : undefined,
+          fee: toRupees(entity.fee ?? 0),
+          tax: toRupees(entity.tax ?? 0),
           raw: entity,
         },
         { upsert: true, new: true },
@@ -335,6 +338,30 @@ export async function handleWebhookEvent(event) {
       break;
     }
 
+    case "settlement.processed": {
+      const st = event.payload?.settlement?.entity;
+      if (st) {
+        await Settlement.updateOne(
+          { settlementId: st.id },
+          {
+            $set: {
+              settlementId: st.id,
+              amount: toRupees(st.amount),
+              fees: toRupees(st.fees ?? 0),
+              tax: toRupees(st.tax ?? 0),
+              status: st.status ?? "processed",
+              utr: st.utr,
+              settledAt: st.created_at ? new Date(st.created_at * 1000) : new Date(),
+              raw: st,
+            },
+          },
+          { upsert: true },
+        );
+        logger.success(`[razorpay] settlement ${st.id} → ${toRupees(st.amount)}`);
+      }
+      break;
+    }
+
     default:
       return { handled: false, event: event.event };
   }
@@ -345,6 +372,157 @@ export async function handleWebhookEvent(event) {
 /* ──────────────────────── admin payments panel ────────────────────────── */
 
 /** Everything the panel needs, from our own mirror — no Razorpay call. */
+/* ──────────────────────────── settlements ─────────────────────────────── */
+
+/**
+ * Pulls settlements from Razorpay into the local mirror.
+ *
+ * Upserts by settlement id, so running it twice is harmless and a settlement
+ * that moves from created to processed is updated in place. Returns what it
+ * touched rather than throwing when Razorpay is down — the finance screen must
+ * still render from the mirror.
+ */
+export async function syncSettlements({ count = 100 } = {}) {
+  if (!env.razorpay.enabled) {
+    return { synced: 0, skipped: "Razorpay is not configured" };
+  }
+
+  try {
+    const res = await rzp("/settlements", { params: { count } });
+    const items = res?.items ?? [];
+
+    await Promise.all(
+      items.map((s) =>
+        Settlement.updateOne(
+          { settlementId: s.id },
+          {
+            $set: {
+              settlementId: s.id,
+              amount: toRupees(s.amount),
+              fees: toRupees(s.fees ?? 0),
+              tax: toRupees(s.tax ?? 0),
+              status: s.status,
+              utr: s.utr,
+              settledAt: s.created_at ? new Date(s.created_at * 1000) : new Date(),
+              raw: s,
+            },
+          },
+          { upsert: true },
+        ),
+      ),
+    );
+
+    logger.info(`[razorpay] synced ${items.length} settlement(s)`);
+    return { synced: items.length };
+  } catch (err) {
+    logger.warn(`[razorpay] settlement sync failed: ${err.message}`);
+    return { synced: 0, error: err.message };
+  }
+}
+
+/**
+ * The money view for the admin finance screen.
+ *
+ * Razorpay's public API has no "account balance" for a payment-gateway
+ * account — balance endpoints belong to RazorpayX, which this business does
+ * not use. So the figure shown as awaiting settlement is DERIVED:
+ *
+ *   captured − refunded − Razorpay's fees − already settled
+ *
+ * It matches the Razorpay dashboard's "to be settled" closely, but it is our
+ * arithmetic over our own mirror, not a number Razorpay handed us. Labelled
+ * that way in the UI so nobody reconciles the books against a guess.
+ */
+export async function financeSummary() {
+  const [payAgg, refundAgg, settleAgg, recent, lastSettlement] = await Promise.all([
+    Payment.aggregate([
+      {
+        $group: {
+          _id: null,
+          captured: {
+            $sum: {
+              $cond: [
+                { $in: ["$status", ["captured", "refunded", "partially_refunded"]] },
+                "$amount",
+                0,
+              ],
+            },
+          },
+          fees: { $sum: { $add: [{ $ifNull: ["$fee", 0] }, { $ifNull: ["$tax", 0] }] } },
+          refunded: { $sum: "$refundedAmount" },
+        },
+      },
+    ]),
+
+    /* Refund states live inside each payment, so they need unwinding to count. */
+    Payment.aggregate([
+      { $unwind: "$refunds" },
+      { $group: { _id: "$refunds.status", count: { $sum: 1 }, amount: { $sum: "$refunds.amount" } } },
+    ]),
+
+    Settlement.aggregate([
+      { $group: { _id: "$status", count: { $sum: 1 }, amount: { $sum: "$amount" } } },
+    ]),
+
+    Settlement.find().sort({ settledAt: -1 }).limit(8).lean(),
+    Settlement.findOne({ status: "processed" }).sort({ settledAt: -1 }).lean(),
+  ]);
+
+  const p = payAgg[0] ?? { captured: 0, fees: 0, refunded: 0 };
+  const pickSettle = (st) => settleAgg.find((x) => x._id === st) ?? { count: 0, amount: 0 };
+  const settled = pickSettle("processed");
+  const settlingNow = pickSettle("created");
+
+  const refunds = { processed: 0, pending: 0, failed: 0, processedAmount: 0, pendingAmount: 0 };
+  for (const r of refundAgg) {
+    /* Razorpay uses "pending" while a refund is with the bank; some accounts
+       also report "processing". Both mean the same thing to an admin. */
+    const key = r._id === "processing" ? "pending" : r._id;
+    if (key in refunds) {
+      refunds[key] += r.count;
+      if (key === "processed") refunds.processedAmount += r.amount;
+      if (key === "pending") refunds.pendingAmount += r.amount;
+    }
+  }
+
+  const raw = p.captured - p.refunded - p.fees - settled.amount - settlingNow.amount;
+
+  /* Settlements can cover payments this system never recorded — a Razorpay
+     account that traded before the site went live, or a mirror that missed a
+     webhook. Then the subtraction goes negative and clamping it to zero would
+     present a meaningless number as fact, so the estimate is withheld instead. */
+  const reliable = raw >= 0;
+  const awaiting = reliable ? raw : null;
+
+  return {
+    /* Derived, not fetched — see the note above this function. */
+    awaitingSettlement: awaiting === null ? null : Math.round(awaiting * 100) / 100,
+    /* False when settlements outrun the payments we know about — see above. */
+    estimateReliable: reliable,
+    settledTotal: Math.round(settled.amount * 100) / 100,
+    settlingNow: Math.round(settlingNow.amount * 100) / 100,
+    settlementCount: settled.count,
+    gatewayFees: Math.round(p.fees * 100) / 100,
+    capturedTotal: Math.round(p.captured * 100) / 100,
+    refundedTotal: Math.round(p.refunded * 100) / 100,
+    refunds,
+    lastSettlement: lastSettlement
+      ? { amount: lastSettlement.amount, utr: lastSettlement.utr, at: lastSettlement.settledAt }
+      : null,
+    recentSettlements: recent.map((s) => ({
+      id: s.settlementId,
+      amount: s.amount,
+      fees: s.fees,
+      tax: s.tax,
+      status: s.status,
+      utr: s.utr,
+      at: s.settledAt,
+    })),
+    /* The UI greys the settlement cards out rather than showing zeroes as fact. */
+    live: env.razorpay.enabled,
+  };
+}
+
 export async function paymentSummary({ from, to } = {}) {
   const match = {};
   if (from || to) {
@@ -462,6 +640,8 @@ export const razorpayService = {
   verifyPaymentSignature,
   fetchPayment,
   refundOrderPayment,
+  syncSettlements,
+  financeSummary,
   verifyWebhookSignature,
   handleWebhookEvent,
   paymentSummary,

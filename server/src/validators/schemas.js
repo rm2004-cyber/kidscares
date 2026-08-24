@@ -276,6 +276,23 @@ export const reviewModerateSchema = z.object({
 
 /* ─────────────────────────────── returns ──────────────────────────────── */
 
+/** Measured at packing — every dimension must be real, none may default. */
+export const packOrderSchema = z.object({
+  parcel: z.object({
+    weightKg: z.coerce.number().positive("Weight must be more than zero").max(50),
+    lengthCm: z.coerce.number().positive("Length must be more than zero").max(200),
+    breadthCm: z.coerce.number().positive("Breadth must be more than zero").max(200),
+    heightCm: z.coerce.number().positive("Height must be more than zero").max(200),
+  }),
+  note: z.string().trim().max(300).optional(),
+});
+
+export const bookShipmentSchema = z.object({
+  /* Optional: omitting it lets Shiprocket auto-assign, which is the fallback
+     when every listed courier fails. */
+  courierId: z.coerce.number().int().positive().optional(),
+});
+
 export const returnCompleteSchema = z.object({
   restock: z.boolean().optional().default(true),
   /** Omitted means "refund the full value of the returned lines". */

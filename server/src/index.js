@@ -6,6 +6,7 @@ import { connectDB, disconnectDB } from "./config/db.js";
 import { initSockets } from "./sockets/index.js";
 import { logger } from "./config/logger.js";
 import { shiprocketService } from "./services/shiprocket.service.js";
+import { razorpayService } from "./services/razorpay.service.js";
 
 async function main() {
   for (const warning of assertEnv()) logger.warn(warning);
@@ -35,6 +36,25 @@ async function main() {
       )
     : null;
 
+  /* Settlements land once a day (T+2 for most accounts), and the webhook can
+     be missed like any other. A slow poll keeps the finance screen honest
+     without hammering the API. */
+  const settlementSweep = env.razorpay.enabled
+    ? setInterval(
+        () =>
+          razorpayService
+            .syncSettlements()
+            .catch((e) => logger.error("[settlements] sync failed:", e.message)),
+        6 * 60 * 60_000,
+      )
+    : null;
+
+  if (env.razorpay.enabled) {
+    razorpayService
+      .syncSettlements()
+      .catch((e) => logger.warn(`[settlements] first sync failed: ${e.message}`));
+  }
+
   if (!env.shiprocket.enabled) {
     logger.warn("Shiprocket not configured — tracking sync disabled");
   }
@@ -48,6 +68,7 @@ async function main() {
   const shutdown = async (signal) => {
     logger.warn(`${signal} received — shutting down`);
     if (trackingSweep) clearInterval(trackingSweep);
+    if (settlementSweep) clearInterval(settlementSweep);
     io.close();
     server.close();
     await disconnectDB();

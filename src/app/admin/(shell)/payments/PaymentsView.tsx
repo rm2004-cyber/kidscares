@@ -9,6 +9,7 @@ import {
   Banknote,
   CreditCard,
   IndianRupee,
+  Landmark,
   Loader2,
   RefreshCw,
   RotateCcw,
@@ -96,8 +97,39 @@ const METHOD_ICON: Record<string, typeof Wallet> = {
  * the dashboard stays fast, works when Razorpay is slow, and does not burn
  * API quota on every page view.
  */
+type Finance = {
+  awaitingSettlement: number | null;
+  estimateReliable: boolean;
+  settledTotal: number;
+  settlingNow: number;
+  settlementCount: number;
+  gatewayFees: number;
+  capturedTotal: number;
+  refundedTotal: number;
+  refunds: {
+    processed: number;
+    pending: number;
+    failed: number;
+    processedAmount: number;
+    pendingAmount: number;
+  };
+  lastSettlement: { amount: number; utr?: string; at: string } | null;
+  recentSettlements: {
+    id: string;
+    amount: number;
+    fees: number;
+    tax: number;
+    status: string;
+    utr?: string;
+    at: string;
+  }[];
+  live: boolean;
+};
+
 export function PaymentsView() {
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [finance, setFinance] = useState<Finance | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [series, setSeries] = useState<
     { label: string; collected: number; refunded: number; failed: number }[]
   >([]);
@@ -118,12 +150,14 @@ export function PaymentsView() {
     setLoading(true);
     setError("");
     try {
-      const [s, sr, list] = await Promise.all([
+      const [s, fin, sr, list] = await Promise.all([
         adminApi.paymentsSummary(),
+        adminApi.finance(),
         adminApi.paymentsSeries(14),
         adminApi.listPayments({ q, status, method, page, limit: 20 }),
       ]);
       setSummary(s);
+      setFinance(fin as Finance);
       setSeries(sr ?? []);
       setRows(list?.data ?? []);
       setTotal(list?.meta?.total ?? 0);
@@ -142,6 +176,20 @@ export function PaymentsView() {
     () => Math.max(...series.map((s) => Math.max(s.collected, s.refunded)), 1),
     [series],
   );
+
+  const pullSettlements = async () => {
+    setSyncing(true);
+    setError("");
+    try {
+      const res = (await adminApi.syncSettlements()) as { synced: number; error?: string };
+      if (res?.error) setError(`Razorpay: ${res.error}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not reach Razorpay.");
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const refund = async (p: Payment) => {
     if (!p.order) return;
@@ -213,6 +261,12 @@ export function PaymentsView() {
           tone="bg-sky-ks/10 text-sky-700"
         />
       </div>
+
+      <FinanceSection
+        finance={finance}
+        syncing={syncing}
+        onSync={pullSettlements}
+      />
 
       <Card
         title="Collected vs refunded"
@@ -518,6 +572,217 @@ export function PaymentsView() {
         )}
       </AnimatePresence>
     </>
+  );
+}
+
+/**
+ * Money view — what is still with Razorpay, what has reached the bank, and
+ * where every refund stands.
+ *
+ * The awaiting-settlement figure is arithmetic over our own mirror, not a
+ * balance Razorpay returns: a payment-gateway account has no balance endpoint
+ * (that belongs to RazorpayX). It is labelled as an estimate for exactly that
+ * reason — nobody should reconcile the books against it without checking the
+ * settlement rows below, which ARE Razorpay's own numbers.
+ */
+function FinanceSection({
+  finance,
+  syncing,
+  onSync,
+}: {
+  finance: Finance | null;
+  syncing: boolean;
+  onSync: () => void;
+}) {
+  const f = finance;
+  const r = f?.refunds;
+
+  return (
+    <div className="mt-4 grid gap-3 lg:grid-cols-[1.15fr_1fr]">
+      {/* ── settlements ── */}
+      <Card
+        title="Money movement"
+        description="Between Razorpay and your bank account"
+        bodyClassName="p-4"
+        actions={
+          <Button variant="secondary" size="sm" onClick={onSync} disabled={syncing}>
+            <RefreshCw className={cn("size-4", syncing && "animate-spin")} />
+            Sync
+          </Button>
+        }
+      >
+        {!f?.live && (
+          <p className="mb-3 flex items-start gap-2 rounded-xl border border-sun-200 bg-sun-100/50 px-3 py-2 text-[11px] font-semibold text-amber-700">
+            <AlertCircle className="mt-px size-3.5 shrink-0" />
+            Razorpay keys are not set, so settlement rows cannot be pulled. The
+            figures below come from payments recorded locally.
+          </p>
+        )}
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Money
+            label="Yet to settle"
+            value={f?.awaitingSettlement == null ? "—" : inr(f.awaitingSettlement)}
+            note={f && !f.estimateReliable ? "Cannot be estimated" : "Estimate"}
+            tone="text-brand-600"
+          />
+          <Money
+            label="Settled to bank"
+            value={inr(f?.settledTotal ?? 0)}
+            note={`${f?.settlementCount ?? 0} payouts`}
+            tone="text-mint-600"
+          />
+          <Money
+            label="Razorpay fees"
+            value={inr(f?.gatewayFees ?? 0)}
+            note="Incl. GST"
+            tone="text-ink"
+          />
+        </div>
+
+        {f && !f.estimateReliable && (
+          <p className="mt-3 flex items-start gap-2 rounded-xl border border-sun-200 bg-sun-100/50 px-3 py-2 text-[11px] font-semibold text-amber-700">
+            <AlertCircle className="mt-px size-3.5 shrink-0" />
+            Razorpay has settled more than the payments recorded here, so what is
+            yet to settle cannot be worked out. That is normal if the account
+            traded before this site went live — the settlement rows below are
+            still exact.
+          </p>
+        )}
+
+        {f?.lastSettlement && (
+          <p className="mt-3 rounded-xl bg-cream px-3 py-2 text-[11px] text-ink-soft">
+            Last payout <b className="text-ink">{inr(f.lastSettlement.amount)}</b> on{" "}
+            {new Date(f.lastSettlement.at).toLocaleDateString("en-IN", {
+              day: "numeric",
+              month: "short",
+            })}
+            {f.lastSettlement.utr && (
+              <>
+                {" · UTR "}
+                <span className="font-mono text-ink">{f.lastSettlement.utr}</span>
+              </>
+            )}
+          </p>
+        )}
+
+        {f?.recentSettlements?.length ? (
+          <ul className="mt-3 divide-y divide-line border-t border-line">
+            {f.recentSettlements.map((s) => (
+              <li key={s.id} className="flex items-center gap-3 py-2">
+                <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-mint-50 text-mint-600">
+                  <Landmark className="size-3.5" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-xs font-bold text-ink">
+                    {inr(s.amount)}
+                  </span>
+                  <span className="block truncate text-[10px] text-ink-muted">
+                    {new Date(s.at).toLocaleDateString("en-IN", {
+                      day: "numeric",
+                      month: "short",
+                    })}
+                    {s.utr && ` · ${s.utr}`}
+                  </span>
+                </span>
+                <Badge tone={s.status === "processed" ? "mint" : "sun"}>{s.status}</Badge>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-3 border-t border-line pt-3 text-[11px] text-ink-muted">
+            No settlements pulled yet. Razorpay usually pays out on a T+2 cycle;
+            press Sync once your first payout is done.
+          </p>
+        )}
+      </Card>
+
+      {/* ── refunds ── */}
+      <Card
+        title="Refunds"
+        description="Where every refund currently stands"
+        bodyClassName="p-4"
+      >
+        <div className="grid gap-2 sm:grid-cols-3">
+          <RefundStat
+            label="Success"
+            count={r?.processed ?? 0}
+            amount={r?.processedAmount ?? 0}
+            tone="border-mint-200 bg-mint-50 text-mint-700"
+          />
+          <RefundStat
+            label="Pending"
+            count={r?.pending ?? 0}
+            amount={r?.pendingAmount ?? 0}
+            tone="border-sun-200 bg-sun-100/60 text-amber-700"
+          />
+          <RefundStat
+            label="Failed"
+            count={r?.failed ?? 0}
+            tone="border-red-200 bg-red-50 text-red-600"
+          />
+        </div>
+
+        <dl className="mt-4 space-y-1.5 border-t border-line pt-3">
+          <Row label="Captured, all time" value={inr(f?.capturedTotal ?? 0)} />
+          <Row label="Refunded, all time" value={inr(f?.refundedTotal ?? 0)} />
+          <Row
+            label="Kept after refunds"
+            value={inr(Math.max(0, (f?.capturedTotal ?? 0) - (f?.refundedTotal ?? 0)))}
+          />
+        </dl>
+
+        {(r?.failed ?? 0) > 0 && (
+          <p className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-[11px] font-semibold text-red-600">
+            <AlertCircle className="mt-px size-3.5 shrink-0" />
+            {r?.failed} refund{(r?.failed ?? 0) > 1 ? "s" : ""} the bank rejected.
+            Retry them from the Returns or Cancellations screen.
+          </p>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function Money({
+  label,
+  value,
+  note,
+  tone,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  tone: string;
+}) {
+  return (
+    <div className="rounded-xl bg-cream p-3">
+      <p className="text-[11px] font-semibold text-ink-muted">{label}</p>
+      <p className={cn("font-display text-xl font-extrabold", tone)}>{value}</p>
+      <p className="text-[10px] text-ink-muted">{note}</p>
+    </div>
+  );
+}
+
+function RefundStat({
+  label,
+  count,
+  amount,
+  tone,
+}: {
+  label: string;
+  count: number;
+  amount?: number;
+  tone: string;
+}) {
+  return (
+    <div className={cn("rounded-xl border-2 p-2.5 text-center", tone)}>
+      <p className="font-display text-xl font-extrabold">{count}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wide">{label}</p>
+      {amount != null && amount > 0 && (
+        <p className="mt-0.5 text-[10px] opacity-80">{inr(amount)}</p>
+      )}
+    </div>
   );
 }
 

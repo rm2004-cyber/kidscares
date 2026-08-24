@@ -280,9 +280,16 @@ export function EmptyState({
 }
 
 /** Wraps a wide table so it scrolls itself instead of the page body. */
+/**
+ * Horizontal scroll container for a wide table.
+ *
+ * No negative margin: every Card that holds a table sets `bodyClassName="p-0"`,
+ * so pulling the table outside the body only pushed it under the card's
+ * rounded, overflow-hidden edge and clipped the first and last columns.
+ */
 export function TableWrap({ children }: { children: React.ReactNode }) {
   return (
-    <div className="-mx-4 overflow-x-auto sm:-mx-5">
+    <div className="overflow-x-auto">
       <div className="inline-block min-w-full align-middle">{children}</div>
     </div>
   );

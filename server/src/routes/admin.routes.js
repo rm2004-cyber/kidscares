@@ -8,6 +8,7 @@ import * as users from "../controllers/user.controller.js";
 import * as analytics from "../controllers/analytics.controller.js";
 import * as upload from "../controllers/upload.controller.js";
 import * as payments from "../controllers/payment.controller.js";
+import * as fulfil from "../controllers/fulfilment.controller.js";
 import * as support from "../controllers/support.controller.js";
 import * as shipments from "../controllers/shipment.controller.js";
 import * as reviews from "../controllers/review.controller.js";
@@ -66,6 +67,24 @@ router.delete("/coupons/:id", content.deleteCoupon);
 /* ── operations ───────────────────────────────────────────────────────── */
 router.get("/orders", orders.listOrders);
 router.get("/orders/:id/invoice", orders.adminInvoice);
+router.get("/orders/:id/receipt", orders.receipt);
+
+/* ── fulfilment: the admin's half of the journey ───────────────────────── */
+router.post("/orders/:id/accept", requireRole("owner", "manager"), fulfil.accept);
+router.post(
+  "/orders/:id/pack",
+  requireRole("owner", "manager"),
+  validate(s.packOrderSchema),
+  fulfil.pack,
+);
+router.get("/orders/:id/courier-options", fulfil.courierOptions);
+router.post(
+  "/orders/:id/book-shipment",
+  requireRole("owner", "manager"),
+  validate(s.bookShipmentSchema),
+  fulfil.book,
+);
+router.get("/orders/:id/timeline", fulfil.timeline);
 router.patch("/orders/:id/status", validate(s.orderStatusSchema), orders.updateStatus);
 router.get("/customers", users.listCustomers);
 
@@ -101,6 +120,12 @@ router.post("/reviews/:id/moderate", validate(s.reviewModerateSchema), reviews.m
 router.delete("/reviews/:id", requireRole("owner", "manager"), reviews.remove);
 
 /* ── payments panel ───────────────────────────────────────────────────── */
+router.get("/payments/finance", payments.finance);
+router.post(
+  "/payments/settlements/sync",
+  requireRole("owner", "manager"),
+  payments.syncSettlements,
+);
 router.get("/payments/summary", payments.summary);
 router.get("/payments/series", payments.series);
 router.get("/payments", payments.list);

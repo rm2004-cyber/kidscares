@@ -102,30 +102,56 @@ async function sr(path, { method = "GET", body, params, retry = true } = {}) {
  * statuses so the storefront only ever renders values it knows how to show.
  */
 const STATUS_MAP = {
-  "awb assigned": "shipped",
-  "label generated": "shipped",
-  "pickup scheduled": "shipped",
-  "pickup generated": "shipped",
-  "pickup queued": "shipped",
-  "manifest generated": "shipped",
+  /* Paperwork, not movement. The courier has accepted the consignment but
+     nobody has collected the parcel — calling this "shipped" is the single
+     most common way tracking pages start lying to customers. */
+  "awb assigned": "shipment-booked",
+  "label generated": "shipment-booked",
+  "manifest generated": "shipment-booked",
+  "pickup scheduled": "shipment-booked",
+  "pickup generated": "shipment-booked",
+  "pickup queued": "shipment-booked",
+  "pickup rescheduled": "shipment-booked",
+  "out for pickup": "shipment-booked",
+
+  /* A courier now physically holds the parcel. This, and only this, is
+     "shipped". */
+  "picked up": "shipped",
+  "pickup completed": "shipped",
   shipped: "shipped",
-  "picked up": "in-transit",
+
   "in transit": "in-transit",
   "reached at destination hub": "in-transit",
-  "out for pickup": "in-transit",
   misroute: "in-transit",
   "out for delivery": "out-for-delivery",
   delivered: "delivered",
   "delivered to consignee": "delivered",
   cancelled: "cancelled",
   canceled: "cancelled",
-  rto: "rto",
-  "rto initiated": "rto",
-  "rto in transit": "rto",
-  "rto delivered": "returned",
+
+  /* A failed attempt is not "still in transit": the customer needs to know
+     someone tried and could not deliver, usually because they must act. */
+  undelivered: "delivery-failed",
+  "delivery failed": "delivery-failed",
+  "customer not available": "delivery-failed",
+  "address incorrect": "delivery-failed",
+  "consignee refused": "delivery-failed",
+
+  /* RTO split into its real stages — "rto" alone hid where the parcel was. */
+  "rto initiated": "rto-initiated",
+  "rto acknowledged": "rto-initiated",
+  "rto in transit": "rto-in-transit",
+  "rto out for delivery": "rto-in-transit",
+  "rto delivered": "rto-delivered",
+  "rto received": "rto-delivered",
+  rto: "rto-initiated",
   "return delivered": "returned",
-  "undelivered": "in-transit",
 };
+
+/* Longest keys first, so "rto delivered" is never matched by "rto". */
+const STATUS_NEEDLES = Object.entries(STATUS_MAP).sort(
+  (a, b) => b[0].length - a[0].length,
+);
 
 export function normaliseStatus(raw) {
   if (!raw) return null;
@@ -133,7 +159,7 @@ export function normaliseStatus(raw) {
   if (STATUS_MAP[key]) return STATUS_MAP[key];
 
   // Fall back to substring matching — Shiprocket adds new variants over time.
-  for (const [needle, mapped] of Object.entries(STATUS_MAP)) {
+  for (const [needle, mapped] of STATUS_NEEDLES) {
     if (key.includes(needle)) return mapped;
   }
   return null;
@@ -142,7 +168,7 @@ export function normaliseStatus(raw) {
 /* ───────────────────────── shipment creation ──────────────────────────── */
 
 /** Maps one of our orders onto Shiprocket's adhoc-order payload. */
-function toShiprocketOrder(order, customer) {
+function toShiprocketOrder(order, customer, parcel) {
   const a = order.address ?? {};
   const [firstName, ...rest] = String(a.fullName ?? customer?.name ?? "Customer").split(" ");
 
@@ -179,12 +205,12 @@ function toShiprocketOrder(order, customer) {
     total_discount: order.discount ?? 0,
     sub_total: order.total,
 
-    /* Shiprocket requires non-zero package dimensions; these are conservative
-       defaults for apparel/toys and can be tuned per product later. */
-    length: 25,
-    breadth: 20,
-    height: 10,
-    weight: Math.max(0.5, order.items.reduce((s, i) => s + 0.3 * i.qty, 0)),
+    /* Measured at packing. Shiprocket rejects zero dimensions, and couriers
+       bill on volumetric weight, so a wrong number here is a real cost. */
+    length: parcel?.lengthCm || 15,
+    breadth: parcel?.breadthCm || 12,
+    height: parcel?.heightCm || 8,
+    weight: parcel?.weightKg || 0.5,
   };
 }
 
@@ -206,7 +232,7 @@ export async function createShipment(orderId, customer) {
 
   const created = await sr("/orders/create/adhoc", {
     method: "POST",
-    body: toShiprocketOrder(order, customer),
+    body: toShiprocketOrder(order, customer, order.parcel),
   });
 
   order.shipping_details = {
@@ -262,6 +288,10 @@ export const checkServiceability = ({
   weight = 0.5,
   cod = 0,
   isReturn = 0,
+  orderValue = 0,
+  length,
+  breadth,
+  height,
 }) =>
   sr("/courier/serviceability/", {
     params: {
@@ -269,10 +299,83 @@ export const checkServiceability = ({
       delivery_postcode: deliveryPincode,
       weight,
       cod,
+      /* Declared value drives insurance and some couriers' pricing bands. */
+      ...(orderValue ? { declared_value: orderValue } : {}),
+      ...(length ? { length, breadth, height } : {}),
       // Reverse legs are priced and serviced differently from forward ones.
       ...(isReturn ? { is_return: 1 } : {}),
     },
   });
+
+/**
+ * Every courier that will actually carry this parcel, priced.
+ *
+ * Returned to the admin so they can weigh cost against speed themselves —
+ * the cheapest option is often two days slower, and only a human knows
+ * whether this particular order can afford that.
+ *
+ * Couriers that cannot service the pair, are blocked, or quote nothing are
+ * dropped: showing an option that will fail at booking wastes the admin's
+ * time and teaches them to distrust the list.
+ */
+export async function courierOptions({
+  pickupPincode,
+  deliveryPincode,
+  weight = 0.5,
+  cod = 0,
+  orderValue = 0,
+}) {
+  const res = await checkServiceability({
+    pickupPincode,
+    deliveryPincode,
+    weight,
+    cod,
+    orderValue,
+  });
+
+  const raw = res?.data?.available_courier_companies ?? [];
+
+  const options = raw
+    .filter((c) => c.blocked !== 1 && Number(c.rate) > 0)
+    .map((c) => ({
+      courierId: c.courier_company_id,
+      name: c.courier_name,
+      /* `rate` is the all-in price Shiprocket bills us; freight_charge alone
+         excludes COD fees and would understate what this shipment costs. */
+      rate: Number(c.rate) || 0,
+      freightCharge: Number(c.freight_charge) || 0,
+      codCharge: Number(c.cod_charges ?? c.cod_charge) || 0,
+      codAvailable: Number(c.cod) === 1,
+      estimatedDays: c.estimated_delivery_days ?? c.etd_hours ?? null,
+      etd: c.etd ?? null,
+      rating: c.rating != null ? Number(c.rating) : null,
+      /* Share of this courier's parcels that get delivered rather than
+         returned — the single best predictor of a smooth delivery. */
+      deliveryPerformance: c.delivery_performance != null
+        ? Number(c.delivery_performance)
+        : null,
+      pickupPerformance: c.pickup_performance != null
+        ? Number(c.pickup_performance)
+        : null,
+      minWeight: Number(c.min_weight) || 0,
+      isSurface: c.is_surface ?? null,
+      recommended: c.is_recommended === 1 || c.recommended_by?.title != null,
+    }))
+    .sort((a, b) => a.rate - b.rate);
+
+  return {
+    options,
+    cheapestId: options[0]?.courierId ?? null,
+    fastestId:
+      [...options]
+        .filter((o) => o.estimatedDays != null)
+        .sort((a, b) => Number(a.estimatedDays) - Number(b.estimatedDays))[0]
+        ?.courierId ?? null,
+    /* Distinguishes "no couriers serve this pincode" from "we filtered them
+       all out", which need different messages to the admin. */
+    totalReturned: raw.length,
+  };
+}
 
 /**
  * Picks the cheapest serviceable courier for a leg.
@@ -495,82 +598,76 @@ export const trackByShipmentId = async (shipmentId) =>
  * order is already past the admin-controlled phase — so a stale scan can never
  * drag a cancelled order back to "in transit".
  */
+/**
+ * Pulls tracking for one order and replays it through the fulfilment handler.
+ *
+ * The webhook is the fast path; this is the safety net for when a callback is
+ * missed. Both funnel into `applyTrackingEvent` so a status only ever changes
+ * in one place — otherwise the two paths drift and the customer sees a
+ * different story depending on which one fired.
+ */
 export async function syncOrderTracking(orderId) {
   const order = await Order.findById(orderId);
   if (!order) throw ApiError.notFound("Order not found");
 
   const d = order.shipping_details ?? {};
-  if (!d.awb && !d.shipmentId) {
-    return { synced: false, reason: "No shipment yet" };
-  }
+  if (!d.awb && !d.shipmentId) return { synced: false, reason: "No shipment yet" };
   if (["cancelled", "returned"].includes(order.status)) {
     return { synced: false, reason: `Order is ${order.status}` };
   }
 
-  const tracking = d.awb
-    ? await trackByAwb(d.awb)
-    : await trackByShipmentId(d.shipmentId);
+  const tracking = d.awb ? await trackByAwb(d.awb) : await trackByShipmentId(d.shipmentId);
 
-  const mapped = normaliseStatus(tracking.currentStatus);
-
+  /* Keep the raw scan trail on the order for the admin's shipment panel. */
   order.shipping_details = {
     ...(d.toObject?.() ?? d),
     awb: tracking.awb ?? d.awb,
     courier: tracking.courier ?? d.courier,
     trackingUrl: tracking.trackUrl ?? d.trackingUrl,
     trackingStatusRaw: tracking.currentStatus ?? d.trackingStatusRaw,
-    trackingStatus: mapped ?? d.trackingStatus,
-    trackingUpdatedAt: new Date(),
     scans: tracking.scans.length ? tracking.scans : d.scans,
   };
-
-  const becameDelivered = mapped === "delivered" && order.status !== "delivered";
-
-  if (mapped && mapped !== order.status) {
-    order.status = mapped;
-    order.timeline.push({
-      status: mapped,
-      at: new Date(),
-      note: tracking.currentStatus ?? "Courier update",
-    });
-    // COD is only collected on delivery, so that is when it becomes paid.
-    if (mapped === "delivered" && order.payment?.method === "cod") {
-      order.payment.status = "paid";
-      order.payment.paidAt = new Date();
-    }
-  }
-
   await order.save();
 
-  /* The courier, not the admin, usually reports delivery — so the delivered
-     email is sent from here rather than the status endpoint. */
-  if (becameDelivered) {
-    const withUser = await Order.findById(order._id).populate("user", "name email");
-    if (withUser?.user?.email) {
-      mailer
-        .sendOrderDeliveredEmail({
-          to: withUser.user.email,
-          order: withUser,
-          customerName: withUser.user.name,
-        })
-        .catch((e) => logger.error("[shiprocket] delivered email failed:", e.message));
-    }
-  }
+  if (!tracking.currentStatus) return { synced: true, changed: false };
+
+  /* Imported lazily: fulfilment imports this module, and a static import back
+     would be a cycle. */
+  const { fulfilmentService } = await import("./fulfilment.service.js");
+  const result = await fulfilmentService.applyTrackingEvent({
+    awb: tracking.awb ?? d.awb,
+    shipmentId: d.shipmentId,
+    courierStatus: tracking.currentStatus,
+    location: tracking.scans?.at(-1)?.location,
+    raw: tracking,
+    source: "shiprocket",
+  });
 
   return {
     synced: true,
-    status: order.status,
-    raw: tracking.currentStatus,
-    scans: order.shipping_details.scans?.length ?? 0,
+    changed: Boolean(result.matched && !result.unchanged && !result.stale),
+    status: result.status,
   };
 }
 
-/** Sweeps every in-flight order. Driven by a timer in the server entrypoint. */
 export async function syncAllActiveShipments() {
   if (!env.shiprocket.enabled) return { skipped: true };
 
   const active = await Order.find({
-    status: { $in: ["shipped", "in-transit", "out-for-delivery", "rto"] },
+    /* Everything a courier still holds. "shipment-booked" belongs here too —
+       a missed pickup webhook is exactly the case this sweep exists to catch. */
+    status: {
+      $in: [
+        "shipment-booked",
+        "shipped",
+        "in-transit",
+        "out-for-delivery",
+        "delivery-failed",
+        "rto-initiated",
+        "rto-in-transit",
+        "rto",
+      ],
+    },
     $or: [
       { "shipping_details.awb": { $exists: true, $ne: null } },
       { "shipping_details.shipmentId": { $exists: true, $ne: null } },
@@ -599,6 +696,7 @@ export const shiprocketService = {
   createShipment,
   createReturnShipment,
   cheapestCourier,
+  courierOptions,
   assignAwb,
   requestPickup,
   generateLabel,

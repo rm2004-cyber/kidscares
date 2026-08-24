@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
-import { Download, FileText, ReceiptText, Search, X } from "lucide-react";
+import { Download, FileText, Printer, ReceiptText, Search, X } from "lucide-react";
 
 import {
   Badge,
@@ -19,12 +19,17 @@ import {
 import { StatusPill } from "@/components/admin/StatusPill";
 import type { Order, OrderStatus } from "@/lib/admin/types";
 import { adminApi, ApiError } from "@/utils/service";
+import { ShippingPanel } from "@/components/admin/ShippingPanel";
+import { OrderTimeline } from "@/components/admin/OrderTimeline";
 import { inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+/* Cancelling is now the only manual status change left. Accepting, packing and
+   booking have their own buttons in the shipping panel, and everything after
+   pickup arrives from courier tracking — see ShippingPanel. */
 /* Only the statuses an admin may set by hand — once a parcel is shipped the
    courier owns the status and the API rejects manual changes. */
-const SETTABLE: OrderStatus[] = ["confirmed", "packed", "shipped", "cancelled"];
+const SETTABLE: OrderStatus[] = ["cancelled"];
 
 const FILTERS: OrderStatus[] = [
   "placed", "confirmed", "packed", "shipped",
@@ -70,16 +75,29 @@ export function OrdersView() {
   for (const o of rows) counts[o.status] = (counts[o.status] ?? 0) + 1;
 
   /**
-   * Marking an order "shipped" hands it to Shiprocket; after that the API
-   * refuses manual changes because courier scans own the status.
+   * Pulls the open order back from the API after a fulfilment action.
+   *
+   * The list row is not enough: accepting or packing writes timestamps, the
+   * measured parcel and the AWB, and the panel has to render those rather
+   * than an optimistic guess at them.
    */
+  const reloadOpen = useCallback(async () => {
+    if (!open) return;
+    try {
+      const res = await adminApi.listOrders({ q: open.orderNo, limit: 1 });
+      const fresh = (res?.data ?? [])[0] as Order | undefined;
+      if (fresh) setOpen(fresh);
+      await load();
+    } catch {
+      /* The action itself succeeded; a stale panel is not worth an error. */
+    }
+  }, [open, load]);
+
+  /** Cancelling is the only status an admin still sets by hand. */
   const setStatusFor = async (id: string, next: OrderStatus) => {
     setError("");
     try {
-      const res = await adminApi.updateOrderStatus(id, next);
-      if (res?.shipmentError) {
-        setError(`Status saved, but the courier handoff failed: ${res.shipmentError}`);
-      }
+      await adminApi.updateOrderStatus(id, next);
       await load();
       setOpen((o) => (o && o._id === id ? { ...o, status: next } : o));
     } catch (err) {
@@ -286,38 +304,44 @@ export function OrdersView() {
                   </p>
                 </div>
 
-                <a
-                  href={adminApi.invoiceUrl(open._id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-xs font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
-                >
-                  <FileText className="size-4" />
-                  Download invoice (PDF)
-                </a>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <a
+                    href={adminApi.invoiceUrl(open._id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-xs font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
+                  >
+                    <FileText className="size-4" />
+                    Invoice (PDF)
+                  </a>
 
-                <div>
-                  <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted">
-                    Update status
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {SETTABLE.map((s) => (
-                      <button
-                        key={s}
-                        onClick={() => void setStatusFor(open._id, s)}
-                        aria-pressed={open.status === s}
-                        className={cn(
-                          "rounded-lg border px-2.5 py-1.5 text-xs font-semibold capitalize transition",
-                          open.status === s
-                            ? "border-ink bg-ink text-white"
-                            : "border-line bg-white text-ink-soft hover:border-brand-300",
-                        )}
-                      >
-                        {s}
-                      </button>
-                    ))}
-                  </div>
+                  {/* Opens in its own tab and prints itself — the slip has no
+                      admin chrome, so it must not render inside the shell. */}
+                  <a
+                    href={`/admin/receipt/${open._id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-xs font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
+                  >
+                    <Printer className="size-4" />
+                    Packing slip
+                  </a>
                 </div>
+
+                <ShippingPanel order={open} onChanged={reloadOpen} />
+
+                <OrderTimeline orderId={open._id} status={open.status} />
+
+                {!["cancelled", "delivered", "returned"].includes(open.status) &&
+                  SETTABLE.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => void setStatusFor(open._id, s)}
+                      className="w-full rounded-xl border border-red-200 py-2.5 text-xs font-bold text-red-600 transition hover:bg-red-50"
+                    >
+                      Cancel this order
+                    </button>
+                  ))}
               </div>
             </motion.div>
           </>

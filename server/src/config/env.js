@@ -71,6 +71,9 @@ export const env = {
     password: process.env.SHIPROCKET_PASSWORD ?? "",
     pickupLocation: process.env.SHIPROCKET_PICKUP_LOCATION ?? "Primary",
     channelId: process.env.SHIPROCKET_CHANNEL_ID ?? "",
+    /* Static key Shiprocket sends as x-api-key on every tracking callback.
+       Set the same value in their dashboard under the webhook settings. */
+    webhookToken: process.env.SHIPROCKET_WEBHOOK_TOKEN ?? "",
     get enabled() {
       return Boolean(process.env.SHIPROCKET_EMAIL && process.env.SHIPROCKET_PASSWORD);
     },

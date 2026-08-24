@@ -1,15 +1,18 @@
 import mongoose from "mongoose";
 import { Order } from "../models/Order.js";
+import { ShipmentEvent } from "../models/ShipmentEvent.js";
 import { Cart } from "../models/Cart.js";
 import { Product } from "../models/Product.js";
 import { Coupon } from "../models/Coupon.js";
 import { Settings } from "../models/Settings.js";
 import { ApiError } from "../utils/ApiError.js";
+import { env } from "../config/env.js";
 import { summarise } from "./cart.service.js";
 import { mailer } from "./mailer.js";
 import { computeTax } from "../utils/tax.js";
 import { shiprocketService } from "./shiprocket.service.js";
-import { ADMIN_CONTROLLED } from "../models/Order.js";
+import { fulfilmentService } from "./fulfilment.service.js";
+import { ADMIN_CONTROLLED, COURIER_OWNED } from "../models/Order.js";
 import { pdfService } from "./pdf.service.js";
 import { logger } from "../config/logger.js";
 
@@ -244,7 +247,16 @@ export async function listAllOrders(query, { page, limit, skip }) {
  * Marking "shipped" is also the handoff point: that is when the order is
  * pushed to Shiprocket and tracking takes over.
  */
-export async function updateOrderStatus(id, status, note = "") {
+/**
+ * The admin's manual status control.
+ *
+ * Only covers the statuses we own. Booking a courier goes through
+ * `fulfilment.bookShipment`, and everything after pickup arrives as a tracking
+ * event — so this function can no longer set "shipped" or anything past it.
+ * That is the point: a status the courier reports must never be guessable from
+ * the dashboard, or the customer's tracking page becomes fiction.
+ */
+export async function updateOrderStatus(id, status, note = "", admin) {
   const order = await Order.findById(id).populate("user", "name email phone");
   if (!order) throw ApiError.notFound("Order not found");
 
@@ -252,65 +264,29 @@ export async function updateOrderStatus(id, status, note = "") {
     throw ApiError.badRequest(`This order is ${order.status} and can no longer be updated.`);
   }
 
-  const courierOwned = !ADMIN_CONTROLLED.includes(order.status);
-  if (courierOwned && status !== "cancelled") {
+  if (COURIER_OWNED.includes(status)) {
+    throw ApiError.badRequest(
+      `"${status}" comes from courier tracking and cannot be set by hand.`,
+    );
+  }
+
+  if (!ADMIN_CONTROLLED.includes(order.status) && status !== "cancelled") {
     throw ApiError.badRequest(
       "This shipment is with the courier — its status now comes from Shiprocket tracking.",
     );
   }
 
-  const wasShipped = order.status === "shipped";
   order.status = status;
   order.timeline.push({ status, at: new Date(), note });
-
-  if (status === "delivered" && order.payment.method === "cod") {
-    order.payment.status = "paid";
-    order.payment.paidAt = new Date();
-  }
-
   await order.save();
 
-  if (status === "delivered") {
-    mailer
-      .sendOrderDeliveredEmail({
-        to: order.user.email,
-        order,
-        customerName: order.user.name,
-      })
-      .catch((e) => logger.error("[order] delivered email failed:", e.message));
-  }
-
-  /* Hand the parcel to Shiprocket exactly once, on the transition into
-     "shipped". Failure is surfaced but does not roll back the status — the
-     admin can retry from the shipment panel. */
-  if (status === "shipped" && !wasShipped) {
-    try {
-      const shipment = await shiprocketService.createShipment(order._id, order.user);
-
-      const fresh = await Order.findById(order._id);
-      const d = fresh.shipping_details ?? {};
-
-      mailer
-        .sendOrderShippedEmail({
-          to: order.user.email,
-          order: fresh,
-          tracking: {
-            courier: d.courier,
-            awb: d.awb,
-            trackingUrl: d.trackingUrl,
-            etaText: fresh.eta
-              ? new Date(fresh.eta).toLocaleDateString("en-IN", { day: "numeric", month: "long" })
-              : null,
-          },
-        })
-        .catch((e) => logger.error("[order] shipped email failed:", e.message));
-
-      return { order: fresh, shipment };
-    } catch (err) {
-      logger.error(`[order] Shiprocket handoff failed for ${order.orderNo}: ${err.message}`);
-      return { order, shipmentError: err.message };
-    }
-  }
+  await fulfilmentService.recordEvent({
+    order,
+    status,
+    source: "admin",
+    actorName: admin?.name,
+    note,
+  });
 
   return { order };
 }
@@ -354,7 +330,168 @@ export async function getOrderStatusLine(userId, orderId) {
   };
 }
 
+/**
+ * Data for the thermal packing slip stuck on the parcel.
+ *
+ * Deliberately narrower than the invoice: no coupon and no shipping line, just
+ * one total and the payment mode. A courier or a customer opening the box
+ * should see what is inside and what, if anything, is left to pay — the
+ * discount breakdown is the seller's business and only invites doorstep
+ * arguments about the price.
+ */
+export async function getReceipt(orderId) {
+  const order = await Order.findById(orderId).populate("user", "name email phone").lean();
+  if (!order) throw ApiError.notFound("Order not found");
+
+  const settings = await Settings.getSite();
+  const w = env.warehouse;
+
+  return {
+    orderNo: order.orderNo,
+    placedAt: order.createdAt,
+    store: {
+      name: settings.storeName,
+      phone: settings.supportPhone,
+      email: settings.supportEmail,
+    },
+    warehouse: {
+      name: w.name,
+      line1: w.address,
+      line2: w.address2,
+      city: w.city,
+      state: w.state,
+      pincode: w.pincode,
+      phone: w.phone,
+    },
+    customer: {
+      name: order.address?.fullName ?? order.user?.name,
+      line1: order.address?.line1,
+      line2: order.address?.line2,
+      city: order.address?.city,
+      state: order.address?.state,
+      pincode: order.address?.pincode,
+      phone: order.address?.phone ?? order.user?.phone,
+    },
+    items: order.items.map((i) => ({
+      title: i.title,
+      size: i.size,
+      color: i.color,
+      qty: i.qty,
+      price: i.price,
+      lineTotal: i.price * i.qty,
+    })),
+    itemCount: order.items.reduce((n, i) => n + i.qty, 0),
+    /* The one figure on the slip — what the order came to, all in. */
+    total: order.total,
+    payment: {
+      method: order.payment?.method ?? "cod",
+      status: order.payment?.status ?? "pending",
+      /* COD is the only case where money is still owed at the door. */
+      amountDue: order.payment?.status === "paid" ? 0 : order.total,
+    },
+    shipping: {
+      awb: order.shipping_details?.awb,
+      courier: order.shipping_details?.courier,
+    },
+  };
+}
+
+/**
+ * Everything the customer's tracking page shows.
+ *
+ * Reads our own database, never Shiprocket: the customer sees the same status
+ * the admin does, and a courier API outage cannot blank the page. Deliberately
+ * withholds Shiprocket's internal ids — the AWB and courier name are all a
+ * customer needs, and the rest is our plumbing.
+ */
+export async function getTracking({ orderNo, userId }) {
+  const order = await Order.findOne({ orderNo }).lean();
+  if (!order) throw ApiError.notFound("We could not find that order.");
+
+  /* An order is private to the person who placed it. */
+  if (userId && String(order.user) !== String(userId)) {
+    throw ApiError.notFound("We could not find that order.");
+  }
+
+  const events = await ShipmentEvent.find({ order: order._id }).sort({ at: 1 }).lean();
+  const d = order.shipping_details ?? {};
+
+  const STEPS = [
+    { key: "placed", label: "Order confirmed" },
+    { key: "packed", label: "Packed" },
+    { key: "shipment-booked", label: "Shipment booked" },
+    { key: "shipped", label: "Picked up" },
+    { key: "in-transit", label: "In transit" },
+    { key: "out-for-delivery", label: "Out for delivery" },
+    { key: "delivered", label: "Delivered" },
+  ];
+
+  const reachedAt = (key) =>
+    events.find((e) => e.status === key)?.at ??
+    order.timeline?.find((t) => t.status === key)?.at ??
+    null;
+
+  const currentIndex = STEPS.findIndex((s) => s.key === order.status);
+
+  return {
+    orderNo: order.orderNo,
+    status: order.status,
+    placedAt: order.createdAt,
+    total: order.total,
+    itemCount: order.items.reduce((n, i) => n + i.qty, 0),
+    items: order.items.map((i) => ({
+      title: i.title,
+      image: i.image,
+      qty: i.qty,
+      size: i.size,
+      color: i.color,
+    })),
+    courier: d.courier ?? null,
+    awb: d.awb ?? null,
+    eta: order.eta ?? null,
+    payment: { method: order.payment?.method, status: order.payment?.status },
+    address: {
+      city: order.address?.city,
+      state: order.address?.state,
+      pincode: order.address?.pincode,
+    },
+    steps: STEPS.map((s, i) => {
+      const at = reachedAt(s.key);
+      return {
+        ...s,
+        at,
+        /* A step is done if it actually happened. When the order has left the
+           ladder entirely — cancelled, or on its way back as an RTO — there is
+           no "current" step, and every stage the parcel really did reach must
+           still read as complete rather than resetting to empty. */
+        done: currentIndex < 0 ? Boolean(at) : i < currentIndex,
+        current: i === currentIndex,
+      };
+    }),
+    /* Off-ladder states the step list cannot express. */
+    exception:
+      ["delivery-failed", "rto-initiated", "rto-in-transit", "rto-delivered", "cancelled"].includes(
+        order.status,
+      )
+        ? order.status
+        : null,
+    /* Warehouse bookkeeping — restocks, booking retries — is ours, not the
+       customer's. They get the journey of their parcel, nothing else. */
+    history: events
+      .filter((e) => e.source === "shiprocket" || e.source === "admin")
+      .filter((e) => !["rto-restocked", "booking-failed"].includes(e.status))
+      .map((e) => ({
+        status: e.status,
+        note: e.note,
+        location: e.location,
+        at: e.at,
+      })),
+  };
+}
+
 export const orderService = {
+  getTracking,
+  getReceipt,
   placeOrder,
   getOrderStatusLine,
   listUserOrders,

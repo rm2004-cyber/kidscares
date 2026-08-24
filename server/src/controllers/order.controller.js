@@ -63,6 +63,25 @@ export const invoice = asyncHandler(async (req, res) => {
 });
 
 /** Same invoice, reachable by an admin for any order. */
+/** Thermal packing-slip data for the admin print view. */
+/** Public tracking, keyed by order number rather than internal id. */
+export const track = asyncHandler(async (req, res) =>
+  ok(
+    res,
+    await orderService.getTracking({
+      orderNo: req.params.orderNo,
+      /* Signed in: the order must be theirs. Signed out: order numbers are
+         unguessable, and letting a customer track from a confirmation email
+         without signing in is worth more than the marginal secrecy. */
+      userId: req.user?._id,
+    }),
+  ),
+);
+
+export const receipt = asyncHandler(async (req, res) =>
+  ok(res, await orderService.getReceipt(req.params.id)),
+);
+
 export const adminInvoice = asyncHandler(async (req, res) => {
   const order = await Order.findById(req.params.id);
   if (!order) throw ApiError.notFound("Order not found");
@@ -105,5 +124,13 @@ export const listOrders = asyncHandler(async (req, res) => {
 });
 
 export const updateStatus = asyncHandler(async (req, res) =>
-  ok(res, await orderService.updateOrderStatus(req.params.id, req.body.status, req.body.note)),
+  ok(
+    res,
+    await orderService.updateOrderStatus(
+      req.params.id,
+      req.body.status,
+      req.body.note,
+      req.admin,
+    ),
+  ),
 );
