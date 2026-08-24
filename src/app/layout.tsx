@@ -39,6 +39,11 @@ export const metadata: Metadata = {
   authors: [{ name: SITE.name }],
   category: "shopping",
   formatDetection: { telephone: false },
+  icons: {
+    icon: "/kidscareslogo-mark.png",
+    shortcut: "/kidscareslogo-mark.png",
+    apple: "/kidscareslogo-mark.png",
+  },
   openGraph: {
     type: "website",
     siteName: SITE.name,

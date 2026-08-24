@@ -12,14 +12,26 @@
 
 /* ─────────────────────────────── config ───────────────────────────────── */
 
-const RAW_API =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") || "http://localhost:5000";
+const ENV_API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+const IS_SERVER = typeof window === "undefined";
 
 /** Origin without the /api suffix — what socket.io connects to. */
-export const SOCKET_URL = RAW_API;
+export const SOCKET_URL = ENV_API ?? "http://127.0.0.1:5000";
 
-/** Base for every REST call. */
-export const BASE_URL = `${RAW_API}/api`;
+/**
+ * Base for every REST call.
+ *
+ * In the browser this is the SAME-ORIGIN proxy path handled by the Next
+ * rewrite (/api/backend → API), not the API port itself. Calling
+ * http://localhost:5000 cross-origin from a page opened via the LAN IP would
+ * drop the session cookie — a cross-site response cannot set SameSite=Lax —
+ * and every signed-in request would 401 right after login. Through the proxy
+ * the cookie is first-party regardless of which host serves the page.
+ *
+ * On the server (RSC render) fetches need an absolute URL, so SSR gets the
+ * direct API address; only public, cacheable reads go through it anyway.
+ */
+export const BASE_URL = IS_SERVER ? `${SOCKET_URL}/api` : "/api/backend";
 
 /* ─────────────────────────────── core ─────────────────────────────────── */
 
@@ -38,7 +50,11 @@ export class ApiError extends Error {
  * are httpOnly, so they only travel if we ask for them explicitly.
  */
 async function request(path, { method = "GET", body, params, headers, signal, raw } = {}) {
-  const url = new URL(`${BASE_URL}${path}`);
+  /* BASE_URL is relative in the browser, so new URL() needs an explicit base. */
+  const url = new URL(
+    `${BASE_URL}${path}`,
+    IS_SERVER ? SOCKET_URL : window.location.origin,
+  );
 
   if (params) {
     for (const [key, value] of Object.entries(params)) {

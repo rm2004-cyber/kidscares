@@ -139,7 +139,7 @@ export function organizationLd() {
     "@type": "Organization",
     name: SITE.name,
     url: SITE.url,
-    logo: absoluteUrl("/icon.svg"),
+    logo: absoluteUrl("/kidscareslogo-mark.png"),
     contactPoint: {
       "@type": "ContactPoint",
       telephone: "+91-1800-123-4567",

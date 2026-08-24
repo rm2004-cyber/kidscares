@@ -72,7 +72,7 @@ export function ProductForm({
       })
       .catch(() => {});
 
-    fetch(`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:5000"}/api/age-groups`)
+    fetch("/api/backend/age-groups")
       .then((r) => r.json())
       .then((j) =>
         setAgeGroups(

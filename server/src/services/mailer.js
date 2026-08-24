@@ -1,3 +1,8 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+import nodemailer from "nodemailer";
 import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 
@@ -6,13 +11,22 @@ import { logger } from "../config/logger.js";
  *
  * Every template is built here in code rather than in the Brevo dashboard, so
  * copy and design live with the codebase, get reviewed, and cannot be edited
- * out from under the app. Brevo is only the delivery pipe.
+ * out from under the app. Brevo is only the delivery pipe, reached over its
+ * SMTP relay (the v3 REST API rejects SMTP keys with 401 "Key not found").
  *
- * Until BREVO_API_KEY is set, sends are logged instead of delivered — signup
- * and checkout stay testable without credentials.
+ * Until BREVO_SMTP_USER/BREVO_SMTP_KEY are set, sends are logged instead of
+ * delivered — signup and checkout stay testable without credentials.
  */
 
-const BREVO_ENDPOINT = "https://api.brevo.com/v3/smtp/email";
+const transporter = nodemailer.createTransport({
+  host: env.brevo.smtpHost,
+  port: env.brevo.smtpPort,
+  secure: false, // STARTTLS on 587
+  auth: {
+    user: env.brevo.smtpUser,
+    pass: env.brevo.smtpKey,
+  },
+});
 
 const inr = (n) => `₹${Number(n ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
@@ -31,20 +45,42 @@ const C = {
   sky: "#34a6e8",
 };
 
-/* Inline SVG is unreliable in Outlook/Gmail, so the logo is a hosted PNG the
-   Next app already serves. Falls back to styled text via the alt attribute. */
-const LOGO_URL = `${env.siteUrl}/kidscareslogo-mark.png`;
+/* Logo strategy: prefer a public HTTPS URL (EMAIL_LOGO_URL) — Gmail's proxy
+   can fetch it and no attachment chip appears in the mailbox list. Without
+   one, the logo travels inside the mail as a cid-referenced attachment,
+   since a localhost/LAN URL would just render as broken image. */
+const LOGO_CID = "kidscares-logo";
+const here = path.dirname(fileURLToPath(import.meta.url));
+const LOGO_PATH = path.resolve(here, "../../../public/kidscareslogo-mark.png");
+const hasLogoFile = fs.existsSync(LOGO_PATH);
+const LOGO_SRC = env.brevo.logoUrl || (hasLogoFile ? `cid:${LOGO_CID}` : "");
+const LOGO_ATTACHMENT =
+  !env.brevo.logoUrl && hasLogoFile
+    ? [
+        {
+          filename: "kidscares-logo.png",
+          path: LOGO_PATH,
+          cid: LOGO_CID,
+          /* Without this, clients list the logo under the paperclip icon in the
+             mailbox view; "inline" marks it as part of the body instead. */
+          contentDisposition: "inline",
+        },
+      ]
+    : [];
 
 /**
  * The storefront's kiddish backdrop, baked to a tiling PNG.
  *
  * The site draws it as an inline data-URI SVG, which Gmail strips and Outlook
- * cannot parse — so `scripts/build-email-backdrop.mjs` rasterises the same
- * tile from `lib/theme/surfaces.ts` and serves it as a hosted image instead.
+ * cannot parse — so `scripts/build-email-backdrop.mjs` rasterises the default
+ * surface from `lib/theme/surfaces.ts` and hosts it on Cloudinary instead.
  * The cream ground is baked into the PNG rather than layered under it, because
- * a transparent tile over a bgcolor renders grey in Outlook.
+ * a transparent tile over a bgcolor renders grey in Outlook. Every email wears
+ * this same neutral theme regardless of what was ordered.
  */
-const BACKDROP_URL = `${env.siteUrl}/email/backdrop.png`;
+const BACKDROP_URL = env.cloudinary.cloudName
+  ? `https://res.cloudinary.com/${env.cloudinary.cloudName}/image/upload/kidscares/email-backdrops/default.png`
+  : `${env.siteUrl}/email/backdrop-default.png`;
 
 /** Confetti dots — pure table/border CSS so it survives email clients. */
 const confettiBar = `
@@ -79,8 +115,8 @@ function layout({ preheader = "", heading, body, footerNote }) {
         ${confettiBar}
 
         <tr><td align="center" style="padding:26px 28px 6px">
-          <img src="${LOGO_URL}" alt="KidsCares" width="180"
-               style="display:block;width:180px;max-width:70%;height:auto;border:0" />
+          ${LOGO_SRC ? `<img src="${LOGO_SRC}" alt="KidsCares" width="180"
+               style="display:block;width:180px;max-width:70%;height:auto;border:0" />` : ""}
           <p style="margin:8px 0 0;font-size:11px;letter-spacing:1.5px;text-transform:uppercase;color:${C.muted}">
             Everything Kids Need, All in One Place
           </p>
@@ -132,49 +168,36 @@ async function deliver({ to, subject, html, text, attachments }) {
       `[mailer] Brevo not configured — would send "${subject}" to ${to}` +
         (attachments?.length ? ` with ${attachments.length} attachment(s)` : ""),
     );
-    return { delivered: false, simulated: true };
+    /* html rides along so tests and preview tooling can render the email
+       without depending on the transport's outcome. */
+    return { delivered: false, simulated: true, html };
   }
 
   try {
-    const res = await fetch(BREVO_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "api-key": env.brevo.apiKey,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify({
-        sender: { email: env.brevo.senderEmail, name: env.brevo.senderName },
-        to: [{ email: to }],
-        subject,
-        htmlContent: html,
-        textContent: text,
-        /* Brevo takes attachments as base64. Kept optional so a failure to
-           build the PDF never blocks the email itself. */
-        ...(attachments?.length
-          ? {
-              attachment: attachments.map((a) => ({
-                name: a.name,
-                content: a.content.toString("base64"),
-              })),
-            }
-          : {}),
-      }),
+    const info = await transporter.sendMail({
+      from: `"${env.brevo.senderName}" <${env.brevo.senderEmail}>`,
+      to,
+      subject,
+      html,
+      text,
+      /* Invoice PDFs arrive as { name, content(Buffer) } and ride as real
+         attachments; the logo is appended as an inline cid reference so it
+         renders in-body without adding to the paperclip count. */
+      attachments: [
+        ...(attachments ?? []).map((a) => ({
+          filename: a.name,
+          content: a.content,
+        })),
+        ...LOGO_ATTACHMENT,
+      ],
     });
 
-    if (!res.ok) {
-      const detail = await res.text().catch(() => "");
-      logger.error(`[mailer] Brevo ${res.status}: ${detail}`);
-      return { delivered: false, error: `Brevo responded ${res.status}` };
-    }
-
-    const json = await res.json().catch(() => ({}));
     logger.success(`[mailer] sent "${subject}" → ${to}`);
-    return { delivered: true, messageId: json.messageId };
+    return { delivered: true, messageId: info.messageId, html };
   } catch (err) {
     // Email is never allowed to fail the operation that triggered it.
     logger.error("[mailer] send failed:", err.message);
-    return { delivered: false, error: err.message };
+    return { delivered: false, error: err.message, html };
   }
 }
 

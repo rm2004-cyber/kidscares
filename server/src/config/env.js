@@ -34,14 +34,21 @@ export const env = {
   },
 
   brevo: {
-    apiKey: process.env.BREVO_API_KEY ?? "",
-    senderEmail: process.env.BREVO_SENDER_EMAIL ?? "no-reply@kidscares.example",
+    smtpUser: process.env.BREVO_SMTP_USER ?? "",
+    smtpKey: process.env.BREVO_SMTP_KEY ?? "",
+    smtpHost: process.env.BREVO_SMTP_HOST ?? "smtp-relay.brevo.com",
+    smtpPort: num(process.env.BREVO_SMTP_PORT, 587),
+    senderEmail: process.env.EMAIL_FROM ?? process.env.BREVO_SENDER_EMAIL ?? "no-reply@kidscares.example",
     senderName: process.env.BREVO_SENDER_NAME ?? "KidsCares",
+    /* Publicly reachable logo URL. When unset, emails embed the logo as an
+       inline cid attachment instead — correct, but Gmail lists those under
+       the paperclip icon, so production should always set this. */
+    logoUrl: process.env.EMAIL_LOGO_URL ?? "",
     otpTemplateId: process.env.BREVO_OTP_TEMPLATE_ID
       ? Number(process.env.BREVO_OTP_TEMPLATE_ID)
       : null,
     get enabled() {
-      return Boolean(process.env.BREVO_API_KEY);
+      return Boolean(this.smtpUser && this.smtpKey);
     },
   },
 
