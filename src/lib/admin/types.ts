@@ -8,15 +8,24 @@
  */
 
 export type OrderStatus =
+  /* Ours, set from the admin panel. */
   | "placed"
   | "confirmed"
   | "packed"
+  | "shipment-booked"
+  /* The courier's, set only by tracking events. */
   | "shipped"
   | "in-transit"
   | "out-for-delivery"
   | "delivered"
+  | "delivery-failed"
+  | "rto-initiated"
+  | "rto-in-transit"
+  | "rto-delivered"
+  /* Terminal. */
   | "cancelled"
   | "returned"
+  /** Legacy coarse RTO status on older orders. */
   | "rto";
 
 /** Mirrors the API's Order document, not the old local mock. */
@@ -50,6 +59,11 @@ export type Order = {
   status: OrderStatus;
   payment: { method: "upi" | "card" | "cod"; status: string };
   shipping_details?: { courier?: string; awb?: string; trackingUrl?: string };
+  parcel?: { weightKg: number; lengthCm: number; breadthCm: number; heightCm: number };
+  acceptedAt?: string;
+  acceptedByName?: string;
+  packedAt?: string;
+  packedByName?: string;
   createdAt: string;
   eta?: string;
 };

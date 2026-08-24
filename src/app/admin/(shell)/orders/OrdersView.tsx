@@ -32,8 +32,9 @@ import { cn } from "@/lib/utils";
 const SETTABLE: OrderStatus[] = ["cancelled"];
 
 const FILTERS: OrderStatus[] = [
-  "placed", "confirmed", "packed", "shipped",
-  "in-transit", "out-for-delivery", "delivered", "cancelled",
+  "placed", "confirmed", "packed", "shipment-booked", "shipped",
+  "in-transit", "out-for-delivery", "delivered",
+  "delivery-failed", "rto-initiated", "rto-delivered", "cancelled",
 ];
 
 export function OrdersView() {
