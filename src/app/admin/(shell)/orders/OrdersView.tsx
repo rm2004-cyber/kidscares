@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Image from "next/image";
 import { AnimatePresence, motion } from "motion/react";
-import { Download, ReceiptText, Search, X } from "lucide-react";
+import { Download, FileText, ReceiptText, Search, X } from "lucide-react";
 
 import {
   Badge,
@@ -285,6 +285,16 @@ export function OrdersView() {
                     {open.payment?.method === "cod" ? "Cash on delivery" : "Paid online"}
                   </p>
                 </div>
+
+                <a
+                  href={adminApi.invoiceUrl(open._id)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center gap-2 rounded-xl border border-line py-2.5 text-xs font-bold text-ink-soft transition hover:border-brand-300 hover:text-brand-600"
+                >
+                  <FileText className="size-4" />
+                  Download invoice (PDF)
+                </a>
 
                 <div>
                   <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted">

@@ -441,12 +441,17 @@ export function VerifyOtpForm({
   to,
   isReset,
   isSignup,
+  name,
+  phone,
   next,
 }: {
   to: string;
   isReset: boolean;
   /** True when this code completes a signup rather than a sign-in. */
   isSignup: boolean;
+  /** Carried from the signup form so a resend can re-issue a signup code. */
+  name?: string;
+  phone?: string;
   next?: string;
 }) {
   const router = useRouter();
@@ -560,10 +565,19 @@ export function VerifyOtpForm({
             <button
               type="button"
               onClick={async () => {
+                setError("");
                 try {
-                  if (isSignup) await authApi.requestLoginOtp(to);
-                  else if (isReset) await authApi.forgotPassword(to);
-                  else await authApi.requestLoginOtp(to);
+                  /* Each flow has its own issuer. A signup code must come from
+                     the signup endpoint — the login one looks the account up
+                     first, and during signup there is no account yet, so it
+                     answered "user not found". */
+                  if (isSignup) {
+                    await authApi.requestSignupOtp({ name, email: to, phone });
+                  } else if (isReset) {
+                    await authApi.forgotPassword(to);
+                  } else {
+                    await authApi.requestLoginOtp(to);
+                  }
                   setSeconds(30);
                 } catch (err) {
                   setError(err instanceof ApiError ? err.message : "Could not resend.");

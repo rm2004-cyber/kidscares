@@ -150,6 +150,9 @@ const productBaseSchema = z.object({
     .optional(),
   stock: z.coerce.number().int().min(0).optional().default(0),
   inStock: z.boolean().optional().default(true),
+  isReturnable: z.boolean().optional().default(true),
+  returnWindowDays: z.coerce.number().int().min(0).max(180).optional().default(30),
+  returnPolicyNote: z.string().trim().max(300).optional().default(""),
   isActive: z.boolean().optional().default(true),
   seo: seoSchema,
 });
@@ -267,6 +270,59 @@ export const reviewWriteSchema = z.object({
 });
 
 export const reviewModerateSchema = z.object({
+  approve: z.boolean(),
+  note: z.string().trim().max(500).optional().default(""),
+});
+
+/* ─────────────────────────────── returns ──────────────────────────────── */
+
+export const returnCompleteSchema = z.object({
+  restock: z.boolean().optional().default(true),
+  /** Omitted means "refund the full value of the returned lines". */
+  amount: z.coerce.number().positive("Refund must be more than zero").optional(),
+  deductionNote: z.string().trim().max(300).optional(),
+});
+
+export const markRefundPaidSchema = z.object({
+  reference: z.string().trim().max(80).optional(),
+});
+
+export const returnRequestSchema = z.object({
+  itemIndexes: z.array(z.coerce.number().int().min(0)).min(1, "Pick at least one item"),
+  reasonCode: z.enum([
+    "wrong-size", "damaged", "wrong-item",
+    "not-as-described", "quality-issue", "changed-mind", "other",
+  ]),
+  reasonText: z.string().trim().max(500).optional().default(""),
+  resolution: z.enum(["refund", "exchange"]).optional().default("refund"),
+
+  /** "source" reverses the original payment; the others need an account. */
+  refundMode: z.enum(["source", "bank", "upi"]).optional(),
+  bankDetails: z
+    .object({
+      accountName: z.string().trim().min(2, "Enter the account holder's name").max(100).optional(),
+      accountNumber: z
+        .string()
+        .trim()
+        .regex(/^\d{9,18}$/, "Account number must be 9–18 digits")
+        .optional(),
+      ifsc: z
+        .string()
+        .trim()
+        .toUpperCase()
+        .regex(/^[A-Z]{4}0[A-Z0-9]{6}$/, "Enter a valid IFSC code")
+        .optional(),
+      bankName: z.string().trim().max(100).optional(),
+      upiId: z
+        .string()
+        .trim()
+        .regex(/^[\w.\-]{2,}@[a-zA-Z]{2,}$/, "Enter a valid UPI ID")
+        .optional(),
+    })
+    .optional(),
+});
+
+export const returnResolveSchema = z.object({
   approve: z.boolean(),
   note: z.string().trim().max(500).optional().default(""),
 });

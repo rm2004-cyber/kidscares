@@ -76,6 +76,18 @@ export const env = {
     },
   },
 
+  warehouse: {
+    name: process.env.WAREHOUSE_NAME ?? "KidsCares Warehouse",
+    phone: process.env.WAREHOUSE_PHONE ?? "",
+    email: process.env.WAREHOUSE_EMAIL ?? "",
+    address: process.env.WAREHOUSE_ADDRESS ?? "",
+    address2: process.env.WAREHOUSE_ADDRESS_2 ?? "",
+    city: process.env.WAREHOUSE_CITY ?? "",
+    state: process.env.WAREHOUSE_STATE ?? "",
+    pincode: process.env.WAREHOUSE_PINCODE ?? "",
+    country: process.env.WAREHOUSE_COUNTRY ?? "India",
+  },
+
   tax: {
     gstRate: num(process.env.GST_RATE, 5),
     sellerState: (process.env.SELLER_STATE ?? "Punjab").trim(),

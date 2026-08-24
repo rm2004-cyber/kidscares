@@ -39,6 +39,19 @@ const itemSchema = new mongoose.Schema(
        someone edited the product afterwards. */
     price: { type: Number, required: true },
     mrp: { type: Number, required: true },
+
+    /* Copied from the product at purchase time — the policy the customer
+       actually agreed to, not whatever it says today. */
+    isReturnable: { type: Boolean, default: true },
+    returnWindowDays: { type: Number, default: 30 },
+
+    /** Per-item return state, so a 3-item order can return just one. */
+    returnStatus: {
+      type: String,
+      enum: ["none", "requested", "approved", "rejected", "picked-up", "refunded"],
+      default: "none",
+    },
+    returnRequestId: { type: mongoose.Schema.Types.ObjectId, ref: "ReturnRequest" },
   },
   { _id: false },
 );
@@ -161,6 +174,52 @@ orderSchema.index({ createdAt: -1 });
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ "shipping_details.awb": 1 });
 orderSchema.index({ "shipping_details.shipmentId": 1 });
+
+/**
+ * Whether one line may still be returned.
+ *
+ * Three conditions, all required: the order was delivered, the item was sold
+ * as returnable, and the window has not closed. The window runs from delivery,
+ * not from the order date.
+ */
+orderSchema.methods.returnableItems = function returnableItems() {
+  if (this.status !== "delivered") return [];
+
+  const deliveredAt =
+    this.timeline?.filter((t) => t.status === "delivered").at(-1)?.at ?? this.updatedAt;
+
+  return this.items
+    .map((item, index) => {
+      const days = item.returnWindowDays ?? 0;
+      const closesAt = new Date(new Date(deliveredAt).getTime() + days * 86_400_000);
+      const open = item.isReturnable && days > 0 && Date.now() <= closesAt.getTime();
+
+      return {
+        index,
+        product: item.product,
+        title: item.title,
+        image: item.image,
+        size: item.size,
+        color: item.color,
+        qty: item.qty,
+        price: item.price,
+        isReturnable: Boolean(item.isReturnable),
+        returnWindowDays: days,
+        returnStatus: item.returnStatus ?? "none",
+        closesAt,
+        eligible: open && (item.returnStatus ?? "none") === "none",
+        reason: !item.isReturnable
+          ? "This item cannot be returned"
+          : days <= 0
+            ? "This item cannot be returned"
+            : !open
+              ? "The return window has closed"
+              : (item.returnStatus ?? "none") !== "none"
+                ? "A return is already in progress"
+                : null,
+      };
+    });
+};
 
 /** True while the customer is still allowed to cancel from the storefront. */
 orderSchema.methods.isCancellable = function isCancellable() {

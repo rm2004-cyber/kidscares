@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Package,
   PackageX,
+  RotateCcw,
   Search,
   Settings,
   ShoppingCart,
@@ -65,6 +66,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
     items: [
       { href: "/admin/orders", label: "Orders", icon: ShoppingCart },
       { href: "/admin/reviews", label: "Reviews", icon: MessageSquare },
+      { href: "/admin/returns", label: "Returns", icon: RotateCcw },
       { href: "/admin/cancellations", label: "Cancellations", icon: PackageX },
       { href: "/admin/payments", label: "Payments", icon: Wallet },
       { href: "/admin/customers", label: "Customers", icon: Users },

@@ -2,6 +2,7 @@ import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { ApiError } from "../utils/ApiError.js";
 import { Order } from "../models/Order.js";
+import { mailer } from "./mailer.js";
 
 /**
  * Shiprocket integration.
@@ -255,15 +256,201 @@ export const generateLabel = (shipmentId) =>
 export const cancelShipment = (awbs) =>
   sr("/orders/cancel/shipment/awbs", { method: "POST", body: { awbs: [].concat(awbs) } });
 
-export const checkServiceability = ({ pickupPincode, deliveryPincode, weight = 0.5, cod = 0 }) =>
+export const checkServiceability = ({
+  pickupPincode,
+  deliveryPincode,
+  weight = 0.5,
+  cod = 0,
+  isReturn = 0,
+}) =>
   sr("/courier/serviceability/", {
     params: {
       pickup_postcode: pickupPincode,
       delivery_postcode: deliveryPincode,
       weight,
       cod,
+      // Reverse legs are priced and serviced differently from forward ones.
+      ...(isReturn ? { is_return: 1 } : {}),
     },
   });
+
+/**
+ * Picks the cheapest serviceable courier for a leg.
+ *
+ * Shiprocket returns every option with its own rate; leaving the choice to
+ * auto-assign means paying whatever it picks. Sorting by `rate` and taking the
+ * first is the whole optimisation — on a reverse leg the customer experience
+ * is identical whichever courier collects, so price is the only axis that
+ * matters.
+ *
+ * Couriers that cannot service the pincode pair are filtered out first, and a
+ * blocked/low-rated courier is skipped rather than risk a failed pickup.
+ */
+export async function cheapestCourier({
+  pickupPincode,
+  deliveryPincode,
+  weight = 0.5,
+  cod = 0,
+  isReturn = 0,
+}) {
+  const res = await checkServiceability({
+    pickupPincode,
+    deliveryPincode,
+    weight,
+    cod,
+    isReturn,
+  });
+
+  const options = res?.data?.available_courier_companies ?? [];
+  if (!options.length) {
+    throw new ApiError(422, "No courier services this pincode pair", {
+      code: "NOT_SERVICEABLE",
+    });
+  }
+
+  const usable = options
+    .filter((c) => c.blocked !== 1 && Number(c.rate) > 0)
+    .sort((a, b) => Number(a.rate) - Number(b.rate));
+
+  if (!usable.length) {
+    throw new ApiError(422, "Every courier for this route is currently blocked", {
+      code: "NOT_SERVICEABLE",
+    });
+  }
+
+  const best = usable[0];
+
+  logger.info(
+    `[shiprocket] cheapest ${isReturn ? "reverse" : "forward"} leg ` +
+      `${pickupPincode}→${deliveryPincode}: ${best.courier_name} at ₹${best.rate} ` +
+      `(${usable.length} options, next ₹${usable[1]?.rate ?? "—"})`,
+  );
+
+  return {
+    courierId: best.courier_company_id,
+    courier: best.courier_name,
+    rate: Number(best.rate),
+    estimatedDays: best.estimated_delivery_days ?? best.etd ?? null,
+    /* Kept so the admin can see it was genuinely the cheapest, not just the
+       first thing the API happened to return. */
+    options: usable.slice(0, 5).map((c) => ({
+      courier: c.courier_name,
+      rate: Number(c.rate),
+      days: c.estimated_delivery_days ?? c.etd ?? null,
+    })),
+  };
+}
+
+/**
+ * Books a reverse pickup from the customer's delivery address.
+ *
+ * Pickup is the customer, drop is our warehouse — the mirror of the forward
+ * leg. Called only when an admin approves the return, never when it is
+ * requested, so a rejected return never sends a courier to someone's door.
+ */
+export async function createReturnShipment({ order, returnRequest }) {
+  assertConfigured();
+
+  const a = order.address ?? {};
+  const [firstName, ...rest] = String(a.fullName ?? "Customer").split(" ");
+  const wh = env.warehouse;
+
+  const items = returnRequest.items.map((i) => ({
+    name: i.title,
+    sku: String(i.product ?? i.title).slice(0, 48),
+    units: i.qty,
+    selling_price: i.price,
+    qc_enable: false,
+  }));
+
+  const weight = Math.max(
+    0.5,
+    returnRequest.items.reduce((sum, i) => sum + 0.3 * i.qty, 0),
+  );
+
+  /* Cheapest reverse courier for this exact pincode pair, priced before the
+     order is created so the rate can be stored with it. */
+  const pick = await cheapestCourier({
+    pickupPincode: a.pincode,
+    deliveryPincode: wh.pincode,
+    weight,
+    cod: 0,
+    isReturn: 1,
+  });
+
+  const created = await sr("/orders/create/return", {
+    method: "POST",
+    body: {
+      order_id: `RET-${returnRequest.orderNo}-${String(returnRequest._id).slice(-6)}`,
+      order_date: new Date().toISOString().slice(0, 19).replace("T", " "),
+      ...(env.shiprocket.channelId ? { channel_id: env.shiprocket.channelId } : {}),
+
+      /* Pickup = the customer, at the address the parcel was delivered to. */
+      pickup_customer_name: firstName,
+      pickup_last_name: rest.join(" ") || ".",
+      pickup_address: a.line1 ?? "",
+      pickup_address_2: [a.line2, a.landmark].filter(Boolean).join(", "),
+      pickup_city: a.city ?? "",
+      pickup_state: a.state ?? "",
+      pickup_country: "India",
+      pickup_pincode: Number(a.pincode),
+      pickup_email: returnRequest.user?.email ?? "",
+      pickup_phone: String(a.phone ?? "").replace(/\D/g, "").slice(-10),
+      pickup_isd_code: "91",
+
+      /* Drop = our warehouse. */
+      shipping_customer_name: wh.name,
+      shipping_last_name: ".",
+      shipping_address: wh.address,
+      shipping_address_2: wh.address2,
+      shipping_city: wh.city,
+      shipping_country: wh.country,
+      shipping_pincode: Number(wh.pincode),
+      shipping_state: wh.state,
+      shipping_email: wh.email,
+      shipping_phone: String(wh.phone).replace(/\D/g, "").slice(-10),
+      shipping_isd_code: "91",
+
+      order_items: items,
+      payment_method: "PREPAID",
+      total_discount: 0,
+      sub_total: returnRequest.refundAmount,
+
+      length: 25,
+      breadth: 20,
+      height: 10,
+      weight,
+    },
+  });
+
+  const shipmentId = created.shipment_id ?? created.data?.shipment_id;
+
+  /* Assign the courier we priced. Without an explicit id Shiprocket picks its
+     own default, which is often not the cheapest. */
+  let awb = created.awb_code ?? null;
+  let courier = pick.courier;
+
+  if (shipmentId) {
+    try {
+      const assigned = await assignAwb(shipmentId, pick.courierId);
+      awb = assigned.awb ?? awb;
+      courier = assigned.courier ?? courier;
+    } catch (err) {
+      logger.warn(`[shiprocket] AWB assign failed for return ${returnRequest.orderNo}: ${err.message}`);
+    }
+  }
+
+  return {
+    shiprocketOrderId: String(created.order_id ?? ""),
+    shipmentId: String(shipmentId ?? ""),
+    awb,
+    courier,
+    courierId: pick.courierId,
+    rate: pick.rate,
+    estimatedDays: pick.estimatedDays,
+    options: pick.options,
+  };
+}
 
 /* ──────────────────────────── tracking ────────────────────────────────── */
 
@@ -337,6 +524,8 @@ export async function syncOrderTracking(orderId) {
     scans: tracking.scans.length ? tracking.scans : d.scans,
   };
 
+  const becameDelivered = mapped === "delivered" && order.status !== "delivered";
+
   if (mapped && mapped !== order.status) {
     order.status = mapped;
     order.timeline.push({
@@ -344,9 +533,29 @@ export async function syncOrderTracking(orderId) {
       at: new Date(),
       note: tracking.currentStatus ?? "Courier update",
     });
+    // COD is only collected on delivery, so that is when it becomes paid.
+    if (mapped === "delivered" && order.payment?.method === "cod") {
+      order.payment.status = "paid";
+      order.payment.paidAt = new Date();
+    }
   }
 
   await order.save();
+
+  /* The courier, not the admin, usually reports delivery — so the delivered
+     email is sent from here rather than the status endpoint. */
+  if (becameDelivered) {
+    const withUser = await Order.findById(order._id).populate("user", "name email");
+    if (withUser?.user?.email) {
+      mailer
+        .sendOrderDeliveredEmail({
+          to: withUser.user.email,
+          order: withUser,
+          customerName: withUser.user.name,
+        })
+        .catch((e) => logger.error("[shiprocket] delivered email failed:", e.message));
+    }
+  }
 
   return {
     synced: true,
@@ -388,6 +597,8 @@ export async function syncAllActiveShipments() {
 
 export const shiprocketService = {
   createShipment,
+  createReturnShipment,
+  cheapestCourier,
   assignAwb,
   requestPickup,
   generateLabel,

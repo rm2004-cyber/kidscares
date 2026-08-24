@@ -78,6 +78,10 @@ export type Product = {
   /** Toy/garment safety info — a real ranking + trust signal for a kids brand. */
   safety?: { certification: string; ageWarning: string; material: string };
   inStock: boolean;
+  /** Set per SKU by the admin; snapshotted onto the order line at purchase. */
+  isReturnable?: boolean;
+  returnWindowDays?: number;
+  returnPolicyNote?: string;
   createdAt: string;
   seo?: Partial<Seo>;
 };

@@ -11,6 +11,7 @@
     "start:api": "npm --prefix server start",
     "start:web": "wait-on -t 60000 http-get://127.0.0.1:5000/api/health && next start",
     "server": "npm --prefix server start",
+    "build:email-backdrop": "node --experimental-strip-types scripts/build-email-backdrop.mjs",
     "seed": "npm --prefix server run seed",
     "seed:fresh": "npm --prefix server run seed -- --fresh",
     "install:all": "npm install && npm --prefix server install",

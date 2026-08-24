@@ -21,6 +21,8 @@ export default async function VerifyOtpPage({
         to={one("to") ?? ""}
         isReset={sp.reset === "1"}
         isSignup={sp.pw === "1"}
+        name={one("name")}
+        phone={one("phone")}
         next={one("next")}
       />
     </Suspense>

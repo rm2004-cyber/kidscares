@@ -11,6 +11,7 @@ import * as payments from "../controllers/payment.controller.js";
 import * as support from "../controllers/support.controller.js";
 import * as shipments from "../controllers/shipment.controller.js";
 import * as reviews from "../controllers/review.controller.js";
+import * as returns from "../controllers/return.controller.js";
 
 import { requireAdmin, requireRole } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
@@ -64,11 +65,35 @@ router.delete("/coupons/:id", content.deleteCoupon);
 
 /* ── operations ───────────────────────────────────────────────────────── */
 router.get("/orders", orders.listOrders);
+router.get("/orders/:id/invoice", orders.adminInvoice);
 router.patch("/orders/:id/status", validate(s.orderStatusSchema), orders.updateStatus);
 router.get("/customers", users.listCustomers);
 
 router.get("/settings", content.getSettings);
 router.patch("/settings", requireRole("owner", "manager"), content.updateSettings);
+
+/* ── returns ──────────────────────────────────────────────────────────── */
+router.get("/returns", returns.list);
+router.post("/returns/:id/resolve", requireRole("owner", "manager"), validate(s.returnResolveSchema), returns.resolve);
+router.post(
+  "/returns/:id/complete",
+  requireRole("owner", "manager"),
+  validate(s.returnCompleteSchema),
+  returns.complete,
+);
+router.post(
+  "/returns/:id/retry-refund",
+  requireRole("owner", "manager"),
+  validate(s.returnCompleteSchema),
+  returns.retryRefund,
+);
+router.post(
+  "/returns/:id/mark-refund-paid",
+  requireRole("owner", "manager"),
+  validate(s.markRefundPaidSchema),
+  returns.markRefundPaid,
+);
+router.post("/returns/:id/retry-pickup", requireRole("owner", "manager"), returns.retryPickup);
 
 /* ── reviews ──────────────────────────────────────────────────────────── */
 router.get("/reviews", reviews.list);

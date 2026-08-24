@@ -144,10 +144,19 @@ export function BuyBox({ product }: { product: Product }) {
         </motion.button>
       </div>
 
+      {/* The return line reads from the product, not a global promise —
+          claiming "30-day returns" on a hygiene item would be a lie the
+          checkout then has to walk back. */}
       <ul className="grid grid-cols-3 gap-2 rounded-2xl border border-line bg-white p-3 text-center">
         {[
           { glyph: "truck", tone: "sky" as const, t: "Free over ₹999" },
-          { glyph: "refresh", tone: "grape" as const, t: "30-day returns" },
+          product.isReturnable === false
+            ? { glyph: "shield", tone: "ink" as const, t: "Not returnable" }
+            : {
+                glyph: "refresh",
+                tone: "grape" as const,
+                t: `${product.returnWindowDays ?? 30}-day returns`,
+              },
           { glyph: "shield", tone: "mint" as const, t: "Safety tested" },
         ].map((i) => (
           <li
@@ -159,6 +168,12 @@ export function BuyBox({ product }: { product: Product }) {
           </li>
         ))}
       </ul>
+
+      {product.returnPolicyNote && (
+        <p className="-mt-2 text-center text-[11px] leading-relaxed text-ink-muted">
+          {product.returnPolicyNote}
+        </p>
+      )}
     </div>
   );
 }

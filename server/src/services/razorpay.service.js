@@ -3,6 +3,7 @@ import { env } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { ApiError } from "../utils/ApiError.js";
 import { Payment } from "../models/Payment.js";
+import { Order } from "../models/Order.js";
 
 /**
  * Razorpay integration.
@@ -196,7 +197,12 @@ export async function refundOrderPayment({ order, amount, reason = "Order cancel
 
   logger.success(`[razorpay] refunded ₹${value} for ${order.orderNo} (${refund.id})`);
 
-  return { refundId: refund.id, amount: toRupees(refund.amount), status: refund.status };
+  return {
+    refundId: refund.id,
+    amount: toRupees(refund.amount),
+    status: refund.status,
+    speed: refund.speed_processed ?? refund.speed_requested,
+  };
 }
 
 /* ────────────────────────────── webhooks ──────────────────────────────── */
@@ -295,6 +301,37 @@ export async function handleWebhookEvent(event) {
           payment.refundedAmount >= payment.amount ? "refunded" : "partially_refunded";
         await payment.save();
       }
+
+      /* Propagate to whatever asked for the refund so the admin panel shows a
+         real bank outcome rather than "sent" forever. Imported lazily: the
+         return service imports this module, and a static import would be a
+         cycle. */
+      const settled = entity.status === "processed";
+
+      const { returnService } = await import("./return.service.js");
+      const hit = await returnService.applyRefundWebhook({
+        refundId: entity.id,
+        status: entity.status,
+        failureReason: entity.error_description ?? entity.notes?.reason,
+      });
+
+      /* Not a return — then it belongs to a cancellation, tracked on the order. */
+      if (!hit.matched) {
+        await Order.updateOne(
+          { "refund.reference": entity.id },
+          settled
+            ? { $set: { "refund.status": "processed", "refund.processedAt": new Date() } }
+            : {
+                $set: {
+                  "refund.status": "failed",
+                  "refund.failureReason":
+                    entity.error_description ?? "The bank rejected the refund",
+                },
+              },
+        );
+      }
+
+      logger.info(`[razorpay] refund ${entity.id} → ${entity.status}`);
       break;
     }
 

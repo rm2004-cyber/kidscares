@@ -17,6 +17,9 @@ import { OrderStatusPill } from "../OrderStatusPill";
 import { CancelOrderButton, OrderTracking } from "./OrderTracking";
 import { accountApi, reviewApi, ApiError } from "@/utils/service";
 import { ReviewModal, type ReviewTarget } from "@/components/review/ReviewModal";
+import { ReturnModal } from "@/components/returns/ReturnModal";
+import { returnApi } from "@/utils/service";
+import { RotateCcw } from "lucide-react";
 import { Star } from "lucide-react";
 import { inr } from "@/lib/format";
 
@@ -69,9 +72,19 @@ export function OrderDetailView({ orderId }: { orderId: string }) {
   const [error, setError] = useState("");
   const [reviews, setReviews] = useState<MyReview[]>([]);
   const [target, setTarget] = useState<ReviewTarget | null>(null);
+  const [returnOpen, setReturnOpen] = useState(false);
+  /* Whether the RETURN button appears at all is decided by the API, not by a
+     local status check — the window and the per-SKU policy live server-side. */
+  const [canReturn, setCanReturn] = useState(false);
 
   /* Loaded so each delivered item can show whether it has already been
      reviewed, and in what state — pending, approved or rejected. */
+  const loadReturnEligibility = () =>
+    returnApi
+      .context(orderId)
+      .then((d) => setCanReturn(Boolean((d as { anyEligible?: boolean })?.anyEligible)))
+      .catch(() => setCanReturn(false));
+
   const loadReviews = () =>
     reviewApi
       .mine()
@@ -88,6 +101,7 @@ export function OrderDetailView({ orderId }: { orderId: string }) {
       .finally(() => setLoading(false));
 
     void loadReviews();
+    void loadReturnEligibility();
   }, [orderId]);
 
   if (loading) {
@@ -265,6 +279,20 @@ export function OrderDetailView({ orderId }: { orderId: string }) {
           <SectionCard title="Need help?">
             <div className="space-y-2">
               <CancelOrderButton orderId={order._id} />
+
+              {/* Only offered when the API says at least one line is still
+                  inside its return window and was sold as returnable. */}
+              {canReturn && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full justify-start"
+                  onClick={() => setReturnOpen(true)}
+                >
+                  <RotateCcw className="size-4" />
+                  Return an item
+                </Button>
+              )}
               <a
                 href={accountApi.invoiceUrl(order._id)}
                 target="_blank"
@@ -291,6 +319,13 @@ export function OrderDetailView({ orderId }: { orderId: string }) {
         target={target}
         onClose={() => setTarget(null)}
         onSubmitted={loadReviews}
+      />
+
+      <ReturnModal
+        orderId={orderId}
+        open={returnOpen}
+        onClose={() => setReturnOpen(false)}
+        onDone={loadReturnEligibility}
       />
     </>
   );

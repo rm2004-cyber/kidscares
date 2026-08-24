@@ -10,6 +10,7 @@ import { mailer } from "./mailer.js";
 import { computeTax } from "../utils/tax.js";
 import { shiprocketService } from "./shiprocket.service.js";
 import { ADMIN_CONTROLLED } from "../models/Order.js";
+import { pdfService } from "./pdf.service.js";
 import { logger } from "../config/logger.js";
 
 /** KC + zero-padded daily counter, readable and unique. */
@@ -50,6 +51,13 @@ export async function placeOrder({ user, address, paymentMethod, deliverySpeed =
   const goodsValue = Math.max(0, summary.totals.subtotal - summary.totals.discount);
   const tax = computeTax({ gross: goodsValue, buyerState: address?.state });
 
+  /* Return policy is read once here and copied onto every line below. */
+  const products = await Product.find(
+    { _id: { $in: summary.lines.map((l) => l.productId) } },
+    { isReturnable: 1, returnWindowDays: 1 },
+  ).lean();
+  const byId = new Map(products.map((p) => [String(p._id), p]));
+
   /* Stock is decremented and the order written inside one transaction, so two
      shoppers cannot both buy the last unit. Falls back to a plain write on a
      standalone mongod, which has no transaction support. */
@@ -78,18 +86,26 @@ export async function placeOrder({ user, address, paymentMethod, deliverySpeed =
           {
             orderNo: await nextOrderNo(),
             user: user.id,
-            items: summary.lines.map((l) => ({
-              product: l.productId,
-              slug: l.slug,
-              title: l.title,
-              brand: l.brand,
-              image: l.image,
-              size: l.size,
-              color: l.color,
-              qty: l.qty,
-              price: l.price,
-              mrp: l.mrp,
-            })),
+            items: summary.lines.map((l) => {
+              const p = byId.get(String(l.productId));
+              return {
+                product: l.productId,
+                slug: l.slug,
+                title: l.title,
+                brand: l.brand,
+                image: l.image,
+                size: l.size,
+                color: l.color,
+                qty: l.qty,
+                price: l.price,
+                mrp: l.mrp,
+                /* Frozen at purchase: the policy the customer agreed to, not
+                   whatever the product says months later. */
+                isReturnable: p?.isReturnable ?? true,
+                returnWindowDays: p?.returnWindowDays ?? 30,
+                returnStatus: "none",
+              };
+            }),
             address,
             subtotal: summary.totals.subtotal,
             shipping,
@@ -132,10 +148,29 @@ export async function placeOrder({ user, address, paymentMethod, deliverySpeed =
   cart.couponCode = "";
   await cart.save();
 
-  // Email failure must never fail the order — it is already placed.
-  mailer
-    .sendOrderConfirmationEmail({ to: user.email, order, customerName: user.name })
-    .catch((e) => logger.error("[order] confirmation email failed:", e.message));
+  /* Invoice is generated and attached to the confirmation. Both the PDF and
+     the send are best-effort: the order exists either way, and a failed email
+     must never surface as a failed checkout. */
+  (async () => {
+    let invoicePdf;
+    try {
+      const siteSettings = await Settings.getSite();
+      invoicePdf = await pdfService.generateInvoicePdf({
+        order,
+        user,
+        settings: siteSettings,
+      });
+    } catch (e) {
+      logger.error("[order] invoice PDF failed:", e.message);
+    }
+
+    await mailer.sendOrderConfirmationEmail({
+      to: user.email,
+      order,
+      customerName: user.name,
+      invoicePdf,
+    });
+  })().catch((e) => logger.error("[order] confirmation email failed:", e.message));
 
   return order;
 }
@@ -234,6 +269,16 @@ export async function updateOrderStatus(id, status, note = "") {
   }
 
   await order.save();
+
+  if (status === "delivered") {
+    mailer
+      .sendOrderDeliveredEmail({
+        to: order.user.email,
+        order,
+        customerName: order.user.name,
+      })
+      .catch((e) => logger.error("[order] delivered email failed:", e.message));
+  }
 
   /* Hand the parcel to Shiprocket exactly once, on the transition into
      "shipped". Failure is surfaced but does not roll back the status — the

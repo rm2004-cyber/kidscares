@@ -5,6 +5,8 @@ import { orderService } from "../services/order.service.js";
 import { Order } from "../models/Order.js";
 import { ApiError } from "../utils/ApiError.js";
 import { invoiceService } from "../services/invoice.service.js";
+import { pdfService } from "../services/pdf.service.js";
+import { User } from "../models/User.js";
 import { Settings } from "../models/Settings.js";
 
 export const placeOrder = asyncHandler(async (req, res) => {
@@ -57,13 +59,42 @@ export const invoice = asyncHandler(async (req, res) => {
   const order = await Order.findOne({ _id: req.params.id, user: req.user.id });
   if (!order) throw ApiError.notFound("Order not found");
 
-  const settings = await Settings.getSite();
-  const html = invoiceService.renderInvoice({ order, user: req.user, settings });
-
-  res.setHeader("Content-Type", "text/html; charset=utf-8");
-  res.setHeader("Content-Disposition", `inline; filename="invoice-${order.orderNo}.html"`);
-  return res.send(html);
+  return sendInvoice(res, { order, user: req.user, format: req.query.format });
 });
+
+/** Same invoice, reachable by an admin for any order. */
+export const adminInvoice = asyncHandler(async (req, res) => {
+  const order = await Order.findById(req.params.id);
+  if (!order) throw ApiError.notFound("Order not found");
+
+  const user = await User.findById(order.user);
+  return sendInvoice(res, { order, user, format: req.query.format });
+});
+
+/**
+ * PDF by default; `?format=html` returns the printable page instead.
+ *
+ * Both come from the same order data, so the emailed attachment and the
+ * downloaded copy can never disagree.
+ */
+async function sendInvoice(res, { order, user, format }) {
+  const settings = await Settings.getSite();
+
+  if (format === "html") {
+    const html = invoiceService.renderInvoice({ order, user, settings });
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    return res.send(html);
+  }
+
+  const pdf = await pdfService.generateInvoicePdf({ order, user, settings });
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader(
+    "Content-Disposition",
+    `attachment; filename="invoice-${order.orderNo}.pdf"`,
+  );
+  res.setHeader("Content-Length", pdf.length);
+  return res.end(pdf);
+}
 
 /* ─────────────────────────────── admin ────────────────────────────────── */
 

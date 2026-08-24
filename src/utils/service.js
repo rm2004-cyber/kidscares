@@ -177,6 +177,23 @@ export const accountApi = {
   invoiceUrl: (id) => `${BASE_URL}/me/orders/${id}/invoice`,
 };
 
+/* ─────────────────────────────── returns ──────────────────────────────── */
+
+export const returnApi = {
+  /** Which lines can still be returned, and why not if they cannot. */
+  context: (orderId) => get(`/me/orders/${orderId}/return`),
+  request: (orderId, { itemIndexes, reasonCode, reasonText, resolution, refundMode, bankDetails }) =>
+    post(`/me/orders/${orderId}/return`, {
+      itemIndexes,
+      reasonCode,
+      reasonText,
+      resolution,
+      refundMode,
+      bankDetails,
+    }),
+  mine: () => get("/me/returns"),
+};
+
 /* ─────────────────────────────── reviews ──────────────────────────────── */
 
 export const reviewApi = {
@@ -272,6 +289,31 @@ export const adminApi = {
   updateSettings: (payload) => patch("/admin/settings", payload),
 
   /* ── review moderation ── */
+  /* ── returns ── */
+  listReturns: (query = {}) => get("/admin/returns", { params: query, raw: true }),
+  resolveReturn: (id, { approve, note }) =>
+    post(`/admin/returns/${id}/resolve`, { approve, note }),
+  /**
+   * `amount` omitted refunds the full value of the returned lines.
+   *
+   * @param {string} id
+   * @param {{ restock?: boolean, amount?: number, deductionNote?: string }} [opts]
+   */
+  completeReturn: (id, { restock = true, amount, deductionNote } = {}) =>
+    post(`/admin/returns/${id}/complete`, { restock, amount, deductionNote }),
+  /**
+   * @param {string} id
+   * @param {{ amount?: number, deductionNote?: string }} [opts]
+   */
+  retryReturnRefund: (id, { amount, deductionNote } = {}) =>
+    post(`/admin/returns/${id}/retry-refund`, { amount, deductionNote }),
+  markReturnRefundPaid: (id, reference) =>
+    post(`/admin/returns/${id}/mark-refund-paid`, { reference }),
+  /** Re-book a reverse pickup whose first booking failed. */
+  retryReturnPickup: (id) => post(`/admin/returns/${id}/retry-pickup`),
+  /** Invoice PDF for any order — opened in a new tab, not fetched. */
+  invoiceUrl: (orderId) => `${BASE_URL}/admin/orders/${orderId}/invoice`,
+
   listReviews: (query = {}) => get("/admin/reviews", { params: query, raw: true }),
   moderateReview: (id, { approve, note }) =>
     post(`/admin/reviews/${id}/moderate`, { approve, note }),
@@ -322,6 +364,7 @@ export default {
   accountApi,
   wishlistApi,
   reviewApi,
+  returnApi,
   paymentApi,
   supportApi,
   adminApi,

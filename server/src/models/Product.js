@@ -49,6 +49,15 @@ const productSchema = new mongoose.Schema(
 
     stock: { type: Number, default: 0, min: 0 },
     inStock: { type: Boolean, default: true, index: true },
+
+    /* Return policy is set per SKU, not globally: hygiene items (diapers,
+       innerwear, opened feeding teats) can never come back, while clothing
+       usually can. Snapshotted onto the order line at purchase time so a later
+       policy change cannot retroactively deny a return the customer was
+       promised. */
+    isReturnable: { type: Boolean, default: true },
+    returnWindowDays: { type: Number, default: 30, min: 0, max: 180 },
+    returnPolicyNote: { type: String, trim: true, maxlength: 300 },
     isActive: { type: Boolean, default: true, index: true },
 
     /** Denormalised, kept in sync by a pre-save hook. */

@@ -2,6 +2,7 @@ import { Cart } from "../models/Cart.js";
 import { Product } from "../models/Product.js";
 import { Coupon } from "../models/Coupon.js";
 import { Settings } from "../models/Settings.js";
+import { Order } from "../models/Order.js";
 import { ApiError } from "../utils/ApiError.js";
 
 /** One cart per identity. `user` wins whenever the caller is signed in. */
@@ -25,6 +26,16 @@ const sameLine = (l, { productId, size, color }) =>
  * Prices are never trusted from the client, and a line whose product has since
  * been deactivated is dropped rather than silently charged.
  */
+/** How many completed orders this customer already used a coupon on. */
+async function couponUseCount(userId, code) {
+  if (!userId || !code) return 0;
+  return Order.countDocuments({
+    user: userId,
+    couponCode: code,
+    status: { $nin: ["cancelled"] },
+  });
+}
+
 export async function summarise(cart) {
   const ids = cart.lines.map((l) => l.product);
   const products = await Product.find({ _id: { $in: ids } }).lean();
@@ -75,7 +86,11 @@ export async function summarise(cart) {
     if (!coupon) {
       couponCode = "";
     } else {
-      const result = coupon.evaluate({ subtotal, shipping });
+      const result = coupon.evaluate({
+        subtotal,
+        shipping,
+        userUseCount: await couponUseCount(cart.user, coupon.code),
+      });
       if (result.reason) {
         couponReason = result.reason;
         couponCode = "";
@@ -116,8 +131,21 @@ export async function addItem(identity, { productId, size = "", color = "", qty 
   const cart = await loadCart(identity);
   const existing = cart.lines.find((l) => sameLine(l, { productId, size, color }));
 
+  /* Cap against real stock, not just the inStock flag — otherwise a shopper
+     can add 10 of something with 2 left and only find out at checkout. */
+  const wanted = (existing?.qty ?? 0) + qty;
+  const ceiling = Math.min(10, product.stock > 0 ? product.stock : 10);
+
+  if (wanted > ceiling) {
+    throw ApiError.badRequest(
+      product.stock > 0 && product.stock < 10
+        ? `Only ${product.stock} left in stock.`
+        : "You can order up to 10 of this item.",
+    );
+  }
+
   if (existing) {
-    existing.qty = Math.min(10, existing.qty + qty);
+    existing.qty = wanted;
   } else {
     cart.lines.push({
       product: product._id,
@@ -127,7 +155,7 @@ export async function addItem(identity, { productId, size = "", color = "", qty 
       image: product.images?.[0]?.url,
       size,
       color,
-      qty: Math.min(10, qty),
+      qty: wanted,
       price: product.price,
       mrp: product.mrp,
     });
@@ -145,7 +173,16 @@ export async function updateItem(identity, { productId, size = "", color = "", q
   if (qty <= 0) {
     cart.lines = cart.lines.filter((l) => !sameLine(l, { productId, size, color }));
   } else {
-    line.qty = Math.min(10, qty);
+    const product = await Product.findById(productId).select("stock");
+    const ceiling = Math.min(10, (product?.stock ?? 0) > 0 ? product.stock : 10);
+    if (qty > ceiling) {
+      throw ApiError.badRequest(
+        (product?.stock ?? 0) > 0 && product.stock < 10
+          ? `Only ${product.stock} left in stock.`
+          : "You can order up to 10 of this item.",
+      );
+    }
+    line.qty = qty;
   }
 
   await cart.save();
@@ -176,6 +213,7 @@ export async function applyCoupon(identity, code) {
   const result = coupon.evaluate({
     subtotal: preview.totals.subtotal,
     shipping: preview.totals.shipping,
+    userUseCount: await couponUseCount(cart.user, coupon.code),
   });
   if (result.reason) throw ApiError.badRequest(result.reason);
 

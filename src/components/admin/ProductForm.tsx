@@ -330,6 +330,53 @@ export function ProductForm({
             </div>
           </Card>
 
+          <Card
+            title="Returns"
+            description="Shown to the customer on the product page, and frozen onto the order when they buy"
+          >
+            <div className="rounded-xl border border-line p-3">
+              <Toggle
+                checked={v.isReturnable}
+                onChange={(val) => set("isReturnable", val)}
+                label="This product can be returned"
+                hint="Turn off for hygiene items — diapers, wipes, innerwear, opened feeding teats."
+              />
+            </div>
+
+            {v.isReturnable ? (
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                <Field
+                  label="Return window (days)"
+                  required
+                  hint="Counted from delivery"
+                >
+                  <Input
+                    type="number"
+                    min={1}
+                    max={180}
+                    value={v.returnWindowDays}
+                    onChange={(e) => set("returnWindowDays", Number(e.target.value))}
+                  />
+                </Field>
+                <Field label="Policy note" hint="Optional, shown under the badge">
+                  <Input
+                    value={v.returnPolicyNote}
+                    onChange={(e) => set("returnPolicyNote", e.target.value)}
+                    placeholder="Tags must be intact"
+                  />
+                </Field>
+              </div>
+            ) : (
+              <Field label="Why not returnable" className="mt-4">
+                <Input
+                  value={v.returnPolicyNote}
+                  onChange={(e) => set("returnPolicyNote", e.target.value)}
+                  placeholder="Hygiene item — cannot be returned once opened"
+                />
+              </Field>
+            )}
+          </Card>
+
           <Card title="Variants">
             <div className="space-y-5">
               <div>

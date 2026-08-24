@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as c from "../controllers/user.controller.js";
 import * as orders from "../controllers/order.controller.js";
 import * as reviews from "../controllers/review.controller.js";
+import * as returns from "../controllers/return.controller.js";
 import { requireAuth } from "../middleware/auth.js";
 import { validate } from "../middleware/validate.js";
 import * as s from "../validators/schemas.js";
@@ -32,6 +33,10 @@ router.get("/orders", orders.listMyOrders);
 router.post("/orders", validate(s.placeOrderSchema), orders.placeOrder);
 router.get("/orders/:id", orders.getMyOrder);
 router.get("/orders/:id/invoice", orders.invoice);
+
+router.get("/returns", returns.mine);
+router.get("/orders/:orderId/return", returns.context);
+router.post("/orders/:orderId/return", validate(s.returnRequestSchema), returns.request);
 router.post("/orders/:id/cancel", orders.cancelMyOrder);
 
 export default router;

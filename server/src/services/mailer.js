@@ -35,6 +35,17 @@ const C = {
    Next app already serves. Falls back to styled text via the alt attribute. */
 const LOGO_URL = `${env.siteUrl}/kidscareslogo-mark.png`;
 
+/**
+ * The storefront's kiddish backdrop, baked to a tiling PNG.
+ *
+ * The site draws it as an inline data-URI SVG, which Gmail strips and Outlook
+ * cannot parse — so `scripts/build-email-backdrop.mjs` rasterises the same
+ * tile from `lib/theme/surfaces.ts` and serves it as a hosted image instead.
+ * The cream ground is baked into the PNG rather than layered under it, because
+ * a transparent tile over a bgcolor renders grey in Outlook.
+ */
+const BACKDROP_URL = `${env.siteUrl}/email/backdrop.png`;
+
 /** Confetti dots — pure table/border CSS so it survives email clients. */
 const confettiBar = `
   <tr><td style="padding:0">
@@ -49,11 +60,19 @@ function layout({ preheader = "", heading, body, footerNote }) {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${heading}</title></head>
-<body style="margin:0;padding:0;background:${C.cream};font-family:'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif">
+<body style="margin:0;padding:0;background-color:${C.cream};background-image:url('${BACKDROP_URL}');background-repeat:repeat;font-family:'Segoe UI',system-ui,-apple-system,Helvetica,Arial,sans-serif">
   <div style="display:none;font-size:0;line-height:0;max-height:0;overflow:hidden;opacity:0">${preheader}</div>
 
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${C.cream};padding:28px 12px">
-    <tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         background="${BACKDROP_URL}" bgcolor="${C.cream}"
+         style="background-color:${C.cream};background-image:url('${BACKDROP_URL}');background-repeat:repeat">
+    <tr><td align="center" style="padding:28px 12px">
+      <!--[if gte mso 9]>
+      <v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false"
+              style="width:100%;position:absolute;top:0;left:0;z-index:-1">
+        <v:fill type="tile" src="${BACKDROP_URL}" color="${C.cream}" />
+      </v:rect>
+      <![endif]-->
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
              style="max-width:560px;background:#ffffff;border:1px solid ${C.line};border-radius:22px;overflow:hidden">
 
@@ -107,9 +126,12 @@ const row = (label, value, opts = {}) => `
 
 /* ───────────────────────────── transport ──────────────────────────────── */
 
-async function deliver({ to, subject, html, text }) {
+async function deliver({ to, subject, html, text, attachments }) {
   if (!env.brevo.enabled) {
-    logger.warn(`[mailer] Brevo not configured — would send "${subject}" to ${to}`);
+    logger.warn(
+      `[mailer] Brevo not configured — would send "${subject}" to ${to}` +
+        (attachments?.length ? ` with ${attachments.length} attachment(s)` : ""),
+    );
     return { delivered: false, simulated: true };
   }
 
@@ -127,6 +149,16 @@ async function deliver({ to, subject, html, text }) {
         subject,
         htmlContent: html,
         textContent: text,
+        /* Brevo takes attachments as base64. Kept optional so a failure to
+           build the PDF never blocks the email itself. */
+        ...(attachments?.length
+          ? {
+              attachment: attachments.map((a) => ({
+                name: a.name,
+                content: a.content.toString("base64"),
+              })),
+            }
+          : {}),
       }),
     });
 
@@ -249,7 +281,7 @@ function billingRows(order) {
   return lines.join("");
 }
 
-export function sendOrderConfirmationEmail({ to, order, customerName }) {
+export function sendOrderConfirmationEmail({ to, order, customerName, invoicePdf }) {
   const eta = order.eta
     ? new Date(order.eta).toLocaleDateString("en-IN", {
         weekday: "long",
@@ -262,6 +294,11 @@ export function sendOrderConfirmationEmail({ to, order, customerName }) {
 
   return deliver({
     to,
+    /* The invoice rides along with the confirmation so the customer has it
+       immediately, without hunting for a download link. */
+    attachments: invoicePdf
+      ? [{ name: `invoice-${order.orderNo}.pdf`, content: invoicePdf }]
+      : undefined,
     subject: `Order ${order.orderNo} confirmed — thank you!`,
     text: `Thanks ${customerName ?? ""}! Order ${order.orderNo} is confirmed. Total ${inr(order.total)}.`,
     html: layout({
@@ -315,7 +352,11 @@ export function sendOrderConfirmationEmail({ to, order, customerName }) {
           ${a.phone ?? ""}
         </p>
 
-        ${button(`${env.siteUrl}/account/orders`, "Track your order")}`,
+        ${button(`${env.siteUrl}/account/orders`, "Track your order")}
+
+        <p style="margin:0;font-size:11px;color:${C.muted}">
+          Your tax invoice is attached to this email as a PDF.
+        </p>`,
     }),
   });
 }
@@ -338,9 +379,11 @@ export function sendOrderShippedEmail({ to, order, tracking }) {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
                style="background:${C.cream};border:1px solid ${C.line};border-radius:14px">
           <tr><td style="padding:14px 16px">
-            ${row("Courier", tracking?.courier ?? "—")}
-            ${row("Tracking number", tracking?.awb ?? "—")}
-            ${tracking?.etaText ? row("Expected delivery", tracking.etaText) : ""}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Courier", tracking?.courier ?? "—")}
+              ${row("Tracking number", tracking?.awb ?? "—")}
+              ${tracking?.etaText ? row("Expected delivery", tracking.etaText) : ""}
+            </table>
           </td></tr>
         </table>
 
@@ -403,6 +446,79 @@ export function sendOrderCancelledEmail({ to, order, reason, refund }) {
 
 /* ────────────────────────── refund processed ──────────────────────────── */
 
+/**
+ * Sent the moment a refund is triggered — not when it lands.
+ *
+ * Customers chase refunds because nobody told them it started. Naming the
+ * amount, the withheld part and the expected window up front is what stops
+ * that. A second email follows when the bank confirms.
+ */
+export function sendRefundInitiatedEmail({
+  to,
+  order,
+  request,
+  amount,
+  withheld = 0,
+  deductionNote = "",
+  instant = false,
+}) {
+  return deliver({
+    to,
+    subject: `Refund of ${inr(amount)} started for ${order.orderNo}`,
+    text:
+      `Your refund of ${inr(amount)} for order ${order.orderNo} has been started.` +
+      (withheld > 0 ? ` ${inr(withheld)} was withheld: ${deductionNote}` : ""),
+    html: layout({
+      preheader: `${inr(amount)} on its way back`,
+      heading: "Your refund is on its way",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          We have your returned items and started the refund for
+          <b style="color:${C.ink}">${order.orderNo}</b>. It goes back to the
+          same method you paid with — nothing more for you to do.
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="background:${C.cream};border:1px solid ${C.line};border-radius:14px;margin-bottom:16px">
+          <tr><td style="padding:14px 16px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Returned items", inr(request.refundAmount))}
+              ${withheld > 0 ? row("Withheld", `− ${inr(withheld)}`) : ""}
+              <tr><td colspan="2" style="padding-top:8px;border-top:1px solid ${C.line}"></td></tr>
+              <tr>
+                <td style="padding-top:8px;font-size:14px;font-weight:800;color:${C.ink}">
+                  Refund amount
+                </td>
+                <td align="right" style="padding-top:8px;font-size:16px;font-weight:800;color:${C.brand}">
+                  ${inr(amount)}
+                </td>
+              </tr>
+            </table>
+          </td></tr>
+        </table>
+
+        ${
+          withheld > 0
+            ? `<div style="padding:12px 14px;background:${C.brandSoft};border-radius:12px;margin-bottom:16px">
+                 <p style="margin:0;font-size:12px;line-height:1.6;color:${C.soft}">
+                   <b style="color:${C.ink}">Why ${inr(withheld)} was withheld:</b><br/>
+                   ${deductionNote}
+                 </p>
+               </div>`
+            : ""
+        }
+
+        <p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+          ${
+            instant
+              ? "Your bank has already settled this one — check your statement."
+              : "Banks usually take 5–7 working days to show it. We will email you again the moment it clears."
+          }
+        </p>`,
+    }),
+  });
+}
+
 export function sendRefundProcessedEmail({ to, order, amount, reference }) {
   return deliver({
     to,
@@ -418,9 +534,11 @@ export function sendRefundProcessedEmail({ to, order, amount, reference }) {
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
                style="background:${C.mintSoft};border:1px solid #aef3d2;border-radius:14px">
           <tr><td style="padding:16px">
-            ${row("Refund amount", inr(amount), { strong: true })}
-            ${reference ? row("Reference", reference) : ""}
-            ${row("Expected in", "5–7 working days")}
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Refund amount", inr(amount), { strong: true })}
+              ${reference ? row("Reference", reference) : ""}
+              ${row("Expected in", "5–7 working days")}
+            </table>
           </td></tr>
         </table>
         <p style="margin:14px 0 0;font-size:12px;line-height:1.6;color:${C.muted}">
@@ -431,12 +549,162 @@ export function sendRefundProcessedEmail({ to, order, amount, reference }) {
   });
 }
 
+/* ───────────────────────────── delivered ──────────────────────────────── */
+
+export function sendOrderDeliveredEmail({ to, order, customerName }) {
+  const returnable = (order.items ?? []).filter((i) => i.isReturnable);
+  const window = returnable[0]?.returnWindowDays ?? 0;
+
+  return deliver({
+    to,
+    subject: `Order ${order.orderNo} delivered`,
+    text: `Order ${order.orderNo} has been delivered. Enjoy!`,
+    html: layout({
+      preheader: `${order.orderNo} delivered`,
+      heading: `It's here${customerName ? `, ${customerName.split(" ")[0]}` : ""}!`,
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          Order <b style="color:${C.ink}">${order.orderNo}</b> has been delivered.
+          We hope it is a hit.
+        </p>
+
+        ${returnable.length
+          ? `<div style="margin:0 0 18px;padding:14px 16px;background:${C.cream};border-radius:14px">
+               <p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+                 Not quite right? ${returnable.length === order.items.length ? "This order" : `${returnable.length} of these items`}
+                 can be returned within <b style="color:${C.ink}">${window} days</b> — free pickup, refund to source.
+               </p>
+             </div>`
+          : `<div style="margin:0 0 18px;padding:14px 16px;background:${C.cream};border-radius:14px">
+               <p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+                 For hygiene reasons the items in this order cannot be returned.
+                 If something arrived damaged, reply to this email and we will sort it out.
+               </p>
+             </div>`}
+
+        <p style="margin:0 0 4px;font-size:14px;color:${C.soft}">
+          Enjoyed it? A quick review helps other parents choose.
+        </p>
+        ${button(`${env.siteUrl}/account/orders`, "Rate your order")}`,
+    }),
+  });
+}
+
+/* ───────────────────────── return approved ────────────────────────────── */
+
+export function sendReturnApprovedEmail({ to, order, request, pickup }) {
+  const a = order.address ?? {};
+
+  return deliver({
+    to,
+    subject: `Return approved — pickup arranged for ${order.orderNo}`,
+    text: `Your return for ${order.orderNo} is approved. ${pickup?.courier ?? "A courier"} will collect it.`,
+    html: layout({
+      preheader: `Pickup arranged${pickup?.courier ? ` via ${pickup.courier}` : ""}`,
+      heading: "Return approved — we are collecting it",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          Good news — your return for <b style="color:${C.ink}">${order.orderNo}</b>
+          is approved and a free pickup has been arranged.
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="background:${C.cream};border:1px solid ${C.line};border-radius:14px;margin-bottom:16px">
+          <tr><td style="padding:14px 16px">
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+              ${row("Courier", pickup?.courier ?? "Assigned shortly")}
+              ${pickup?.awb ? row("Tracking number", pickup.awb) : ""}
+              ${pickup?.estimatedDays ? row("Expected pickup", `${pickup.estimatedDays} day(s)`) : ""}
+            </table>
+          </td></tr>
+        </table>
+
+        <p style="margin:0 0 6px;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:${C.muted}">
+          Collecting from
+        </p>
+        <p style="margin:0 0 16px;font-size:13px;line-height:1.6;color:${C.soft}">
+          <b style="color:${C.ink}">${a.fullName ?? ""}</b><br/>
+          ${[a.line1, a.line2].filter(Boolean).join(", ")}<br/>
+          ${a.city ?? ""}, ${a.state ?? ""} — ${a.pincode ?? ""}<br/>
+          ${a.phone ?? ""}
+        </p>
+
+        <div style="padding:12px 14px;background:${C.brandSoft};border-radius:12px">
+          <p style="margin:0;font-size:12px;line-height:1.6;color:${C.soft}">
+            <b style="color:${C.ink}">Before pickup:</b> keep the item in its original
+            packaging with tags attached, and hand it to the courier unsealed so they
+            can verify the contents.
+          </p>
+        </div>
+
+        <p style="margin:16px 0 0;font-size:13px;line-height:1.6;color:${C.soft}">
+          Your refund of <b style="color:${C.ink}">${inr(request.refundAmount)}</b> is
+          issued once the parcel reaches our warehouse.
+        </p>`,
+    }),
+  });
+}
+
+/* ──────────────────────── return completed ────────────────────────────── */
+
+export function sendReturnCompletedEmail({ to, order, request, refund }) {
+  const rows = (request.items ?? [])
+    .map(
+      (i) => `<tr>
+        <td style="padding:6px 0;font-size:13px;color:${C.ink}">${i.title} × ${i.qty}</td>
+        <td style="padding:6px 0;font-size:13px;text-align:right;color:${C.ink}">${inr(i.price * i.qty)}</td>
+      </tr>`,
+    )
+    .join("");
+
+  return deliver({
+    to,
+    subject: `Return completed for ${order.orderNo}`,
+    text: `Your return for ${order.orderNo} is complete.${refund?.amount ? ` Refund of ${inr(refund.amount)} initiated.` : ""}`,
+    html: layout({
+      preheader: `Return completed${refund?.amount ? ` · ${inr(refund.amount)} refunded` : ""}`,
+      heading: "Your return is complete",
+      body: `
+        <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:${C.soft}">
+          We have received the items from order
+          <b style="color:${C.ink}">${order.orderNo}</b> and checked them in.
+        </p>
+
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+               style="border-top:1px solid ${C.line};border-bottom:1px solid ${C.line};margin-bottom:16px">
+          ${rows}
+        </table>
+
+        ${refund?.amount
+          ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                    style="background:${C.mintSoft};border:1px solid #aef3d2;border-radius:14px">
+               <tr><td style="padding:14px 16px">
+                 <p style="margin:0 0 4px;font-size:12px;font-weight:700;color:${C.mint}">Refund initiated</p>
+                 <p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+                   <b style="color:${C.ink}">${inr(refund.amount)}</b> is on its way back to your
+                   original payment method — usually <b style="color:${C.ink}">5–7 working days</b>.
+                   ${refund.reference ? `<br/>Reference: ${refund.reference}` : ""}
+                 </p>
+               </td></tr>
+             </table>`
+          : `<p style="margin:0;font-size:13px;line-height:1.6;color:${C.soft}">
+               This was a cash-on-delivery order, so there is no online refund to process.
+               Our team will be in touch about the amount.
+             </p>`}`,
+    }),
+  });
+}
+
 export const mailer = {
   deliver,
   sendOtpEmail,
   sendOrderConfirmationEmail,
   sendOrderShippedEmail,
   sendOrderCancelledEmail,
+  sendOrderDeliveredEmail,
+  sendReturnApprovedEmail,
+  sendReturnCompletedEmail,
+  sendRefundInitiatedEmail,
   sendRefundProcessedEmail,
 };
 

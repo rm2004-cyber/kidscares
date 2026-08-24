@@ -27,6 +27,9 @@ export type ProductFormValue = {
   highlights: string[];
   safety: { certification: string; ageWarning: string; material: string };
   inStock: boolean;
+  isReturnable: boolean;
+  returnWindowDays: number;
+  returnPolicyNote: string;
   seo: SeoValue;
 };
 
@@ -49,6 +52,9 @@ export const emptyProduct: ProductFormValue = {
   highlights: [],
   safety: { certification: "", ageWarning: "", material: "" },
   inStock: true,
+  isReturnable: true,
+  returnWindowDays: 30,
+  returnPolicyNote: "",
   seo: {
     title: "",
     description: "",
@@ -76,6 +82,9 @@ export function toFormValue(p: Product): ProductFormValue {
     highlights: p.highlights,
     safety: p.safety ?? { certification: "", ageWarning: "", material: "" },
     inStock: p.inStock,
+    isReturnable: p.isReturnable ?? true,
+    returnWindowDays: p.returnWindowDays ?? 30,
+    returnPolicyNote: p.returnPolicyNote ?? "",
     seo: {
       title: p.seo?.title ?? "",
       description: p.seo?.description ?? "",

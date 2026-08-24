@@ -42,12 +42,29 @@ const couponSchema = new mongoose.Schema(
  * Returns a `reason` instead of throwing when it does not apply, so the UI can
  * explain why a code was rejected rather than failing silently.
  */
-couponSchema.methods.evaluate = function evaluate({ subtotal, shipping = 0, now = new Date() }) {
+couponSchema.methods.evaluate = function evaluate({
+  subtotal,
+  shipping = 0,
+  now = new Date(),
+  userUseCount = 0,
+}) {
   if (!this.isActive) return { discount: 0, shippingWaived: false, reason: "This code is no longer active" };
   if (this.startsAt && now < this.startsAt) return { discount: 0, shippingWaived: false, reason: "This code is not active yet" };
   if (now > this.expiresAt) return { discount: 0, shippingWaived: false, reason: "This code has expired" };
   if (this.usageLimit > 0 && this.usedCount >= this.usageLimit) {
     return { discount: 0, shippingWaived: false, reason: "This code has been fully redeemed" };
+  }
+  /* Per-customer cap. Without this a "first order only" coupon applies to
+     every order that customer ever places — a straight revenue leak. */
+  if (this.perUserLimit > 0 && userUseCount >= this.perUserLimit) {
+    return {
+      discount: 0,
+      shippingWaived: false,
+      reason:
+        this.perUserLimit === 1
+          ? "You have already used this code"
+          : `You have used this code ${userUseCount} of ${this.perUserLimit} times`,
+    };
   }
   if (subtotal < this.minOrder) {
     return {
