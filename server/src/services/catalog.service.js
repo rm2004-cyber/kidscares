@@ -210,8 +210,62 @@ export async function deleteBrand(id) {
   return { ok: true };
 }
 
-export const listAgeGroups = () =>
-  AgeGroup.find({ isActive: true }).sort({ order: 1, minMonths: 1 }).lean();
+export const listAgeGroups = ({ activeOnly = true } = {}) =>
+  AgeGroup.find(activeOnly ? { isActive: true } : {})
+    .sort({ order: 1, minMonths: 1 })
+    .lean();
+
+/**
+ * The bounds have to make sense together, which a field-by-field schema cannot
+ * express — and on a PATCH one of them may not even be in the payload, so the
+ * check belongs here where the merged values are known.
+ */
+function assertBounds(min, max) {
+  if (min == null || max == null) return;
+  if (Number(max) <= Number(min)) {
+    throw ApiError.badRequest("The upper age bound has to be above the lower one.");
+  }
+}
+
+export async function createAgeGroup(data) {
+  assertBounds(data.minMonths, data.maxMonths);
+  const slug = await uniqueSlug(AgeGroup, data.slug || data.label);
+  return AgeGroup.create({ ...data, slug });
+}
+
+export async function updateAgeGroup(id, data) {
+  const group = await AgeGroup.findById(id);
+  if (!group) throw ApiError.notFound("Age group not found");
+
+  assertBounds(
+    data.minMonths ?? group.minMonths,
+    data.maxMonths ?? group.maxMonths,
+  );
+
+  if (data.slug && data.slug !== group.slug) {
+    data.slug = await uniqueSlug(AgeGroup, data.slug, group._id);
+  }
+  Object.assign(group, data);
+  await group.save();
+  return group;
+}
+
+export async function deleteAgeGroup(id) {
+  const group = await AgeGroup.findById(id);
+  if (!group) throw ApiError.notFound("Age group not found");
+
+  /* Products carry age slugs, so deleting one out from under them would leave
+     filters pointing at nothing. */
+  const inUse = await Product.countDocuments({ ageSlugs: group.slug });
+  if (inUse) {
+    throw ApiError.badRequest(
+      `${inUse} product(s) are tagged with this age group. Retag them first.`,
+    );
+  }
+
+  await group.deleteOne();
+  return { ok: true };
+}
 
 export const catalogService = {
   listProducts,
@@ -232,4 +286,7 @@ export const catalogService = {
   updateBrand,
   deleteBrand,
   listAgeGroups,
+  createAgeGroup,
+  updateAgeGroup,
+  deleteAgeGroup,
 };

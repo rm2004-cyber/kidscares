@@ -15,7 +15,8 @@
     "seed": "npm --prefix server run seed",
     "seed:fresh": "npm --prefix server run seed -- --fresh",
     "install:all": "npm install && npm --prefix server install",
-    "lint": "eslint"
+    "lint": "eslint",
+    "build:logos": "node scripts/tighten-logo.mjs"
   },
   "dependencies": {
     "clsx": "^2.1.1",

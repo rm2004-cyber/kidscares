@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { AlertTriangle, Check, Globe, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { AlertTriangle, Check, Globe, Sparkles, X } from "lucide-react";
 import { Card, Field, Input, Textarea, Toggle } from "./ui";
+import { suggestSeo, type SuggestInput } from "@/lib/admin/seoSuggest";
 import { cn } from "@/lib/utils";
 
 export type SeoValue = {
@@ -18,12 +19,23 @@ export type SeoValue = {
 const TITLE_MAX = 60;
 const DESC_MAX = 155;
 
+/* Each step is shown while the generator works. The work itself is instant —
+   the pacing exists so the admin can see what was considered, and so three
+   fields do not change under the cursor in a single frame. */
+const STAGES = [
+  "Reading product details",
+  "Fitting the title to 60 characters",
+  "Writing the description",
+  "Picking keywords",
+];
+
 export function SeoEditor({
   value,
   onChange,
   fallbackTitle,
   fallbackDescription,
   urlPath,
+  suggestInput,
 }: {
   value: SeoValue;
   onChange: (next: SeoValue) => void;
@@ -31,8 +43,102 @@ export function SeoEditor({
   fallbackTitle: string;
   fallbackDescription: string;
   urlPath: string;
+  /** Product context for the auto-fill. Omitted disables the button. */
+  suggestInput?: SuggestInput;
 }) {
   const [keywordDraft, setKeywordDraft] = useState("");
+  const [stage, setStage] = useState(-1);
+  const [filled, setFilled] = useState<Set<keyof SeoValue>>(new Set());
+  /** Which field is mid-type, so the preview can show a caret on it. */
+  const [typing, setTyping] = useState<"title" | "description" | null>(null);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const intervals = useRef<ReturnType<typeof setInterval>[]>([]);
+
+  /* Every pending step is cancelled on unmount, or navigating away mid-run
+     would write into a component that no longer exists. */
+  useEffect(() => {
+    const t = timers.current;
+    const iv = intervals.current;
+    return () => {
+      t.forEach(clearTimeout);
+      iv.forEach(clearInterval);
+    };
+  }, []);
+
+  const canSuggest = Boolean(suggestInput?.title?.trim());
+
+  /**
+   * Types a string into one field a few characters at a time.
+   *
+   * Writes against a snapshot taken when the run started rather than reading
+   * `value` on each tick — the prop in this closure is a render old, so
+   * building on it would drop whatever the previous stage just wrote.
+   */
+  const typeInto = (
+    base: SeoValue,
+    key: "title" | "description",
+    text: string,
+    { step = 3, tick = 14 }: { step?: number; tick?: number } = {},
+  ) =>
+    new Promise<void>((resolve) => {
+      let i = 0;
+      const id = setInterval(() => {
+        i = Math.min(text.length, i + step);
+        onChange({ ...base, [key]: text.slice(0, i) });
+        setTyping(i < text.length ? key : null);
+        if (i >= text.length) {
+          clearInterval(id);
+          resolve();
+        }
+      }, tick);
+      intervals.current.push(id);
+    });
+
+  const after = (ms: number) =>
+    new Promise<void>((resolve) => {
+      timers.current.push(setTimeout(resolve, ms));
+    });
+
+  const generate = async () => {
+    if (!suggestInput || stage >= 0) return;
+
+    const next = suggestSeo(suggestInput);
+    /* Frozen at click time so each stage builds on the last one's output. */
+    const base: SeoValue = { ...value };
+
+    setFilled(new Set());
+    setStage(0);
+    await after(300);
+
+    setStage(1);
+    await after(240);
+
+    setStage(2);
+    await typeInto(base, "title", next.title, { step: 2, tick: 16 });
+    base.title = next.title;
+    setFilled((f) => new Set(f).add("title"));
+    await after(180);
+
+    setStage(3);
+    await typeInto(base, "description", next.description, { step: 3, tick: 13 });
+    base.description = next.description;
+    setFilled((f) => new Set(f).add("description"));
+    await after(160);
+
+    /* Keywords land one at a time — a chip list appearing all at once reads as
+       a paste, one at a time reads as a decision per keyword. */
+    const merged = [...new Set([...base.keywords, ...next.keywords])].slice(0, 8);
+    for (let i = base.keywords.length; i <= merged.length; i += 1) {
+      onChange({ ...base, keywords: merged.slice(0, i) });
+      await after(85);
+    }
+
+    setFilled((f) => new Set(f).add("keywords"));
+    setStage(-1);
+    setTyping(null);
+  };
+
+  const busy = stage >= 0;
 
   const set = <K extends keyof SeoValue>(key: K, v: SeoValue[K]) =>
     onChange({ ...value, [key]: v });
@@ -68,7 +174,57 @@ export function SeoEditor({
     <Card
       title="Search engine listing"
       description="Overrides the auto-generated tags. Leave blank to use the defaults."
+      actions={
+        <button
+          type="button"
+          onClick={generate}
+          disabled={!canSuggest || busy}
+          title={
+            canSuggest
+              ? "Fill these from the product details"
+              : "Add a product title first"
+          }
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-bold transition",
+            "bg-gradient-to-r from-grape-500 to-brand-500 text-white",
+            "hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40",
+          )}
+        >
+          <Sparkles className={cn("size-3.5", busy && "animate-pulse")} />
+          {busy ? "Working…" : "Auto-generate"}
+        </button>
+      }
     >
+      {/* Progress. Each step ticks as it completes so the admin can see what
+          the text was built from, rather than three fields changing at once. */}
+      {busy && (
+        <ul className="mb-4 space-y-1.5 rounded-xl border border-grape-200 bg-grape-100/40 p-3">
+          {STAGES.map((label, i) => (
+            <li
+              key={label}
+              className={cn(
+                "flex items-center gap-2 text-[11px] transition-opacity",
+                i > stage ? "opacity-40" : "opacity-100",
+              )}
+            >
+              <span
+                className={cn(
+                  "grid size-3.5 shrink-0 place-items-center rounded-full",
+                  i < stage ? "bg-mint-500" : i === stage ? "bg-grape-500" : "bg-line",
+                )}
+              >
+                {i < stage && <Check className="size-2.5 text-white" strokeWidth={4} />}
+                {i === stage && (
+                  <span className="size-1.5 animate-ping rounded-full bg-white" />
+                )}
+              </span>
+              <span className={i === stage ? "font-bold text-ink" : "text-ink-soft"}>
+                {label}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
       {/* Live SERP preview */}
       <div className="mb-5 rounded-xl border border-line bg-cream p-4">
         <p className="mb-2 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-ink-muted">
@@ -86,6 +242,7 @@ export function SeoEditor({
             )}
           >
             {effectiveTitle || "Untitled page"}
+            {typing === "title" && <Caret />}
           </p>
           <p
             className={cn(
@@ -94,6 +251,7 @@ export function SeoEditor({
             )}
           >
             {effectiveDesc || "No description set."}
+            {typing === "description" && <Caret />}
           </p>
         </div>
       </div>
@@ -107,6 +265,11 @@ export function SeoEditor({
             value={value.title}
             onChange={(e) => set("title", e.target.value)}
             placeholder={fallbackTitle}
+            readOnly={busy}
+            className={cn(
+              filled.has("title") && "ring-2 ring-grape-300",
+              busy && "cursor-default",
+            )}
           />
           <Meter length={effectiveTitle.length} max={TITLE_MAX} />
         </Field>
@@ -119,12 +282,22 @@ export function SeoEditor({
             value={value.description}
             onChange={(e) => set("description", e.target.value)}
             placeholder={fallbackDescription}
+            readOnly={busy}
+            className={cn(
+              filled.has("description") && "ring-2 ring-grape-300",
+              busy && "cursor-default",
+            )}
           />
           <Meter length={effectiveDesc.length} max={DESC_MAX} />
         </Field>
 
         <Field label="Keywords" hint="Enter or comma to add">
-          <div className="rounded-xl border border-line bg-white p-2">
+          <div
+            className={cn(
+              "rounded-xl border border-line bg-white p-2",
+              filled.has("keywords") && "ring-2 ring-grape-300",
+            )}
+          >
             <div className="flex flex-wrap gap-1.5">
               {value.keywords.map((k) => (
                 <span
@@ -202,6 +375,14 @@ export function SeoEditor({
               {passed}/{checks.length}
             </span>
           </p>
+          {!busy && filled.has("description") && effectiveDesc.length < 120 && (
+            <p className="mb-2 rounded-lg bg-white px-2.5 py-2 text-[11px] leading-relaxed text-ink-soft">
+              The description is short because there was little to describe.
+              Fill in the material, highlights or age group above and generate
+              again for a fuller one.
+            </p>
+          )}
+
           <ul className="space-y-1">
             {checks.map((c) => (
               <li key={c.label} className="flex items-center gap-1.5 text-[11px]">
@@ -219,6 +400,17 @@ export function SeoEditor({
         </div>
       </div>
     </Card>
+  );
+}
+
+/** Blinking block that follows the text as it streams in. */
+function Caret() {
+  return (
+    <span
+      aria-hidden
+      className="ml-px inline-block w-[2px] animate-pulse self-stretch bg-current align-text-bottom"
+      style={{ height: "1em" }}
+    />
   );
 }
 

@@ -80,16 +80,20 @@ function ProductCardImpl({
             tint,
           )}
         >
-          <Image
-            src={product.images[0]}
-            alt={product.title}
-            fill
-            unoptimized
-            sizes="(max-width:640px) 50vw, (max-width:1024px) 33vw, 20vw"
-            priority={priority}
-            loading={priority ? undefined : "lazy"}
-            className="object-cover transition-transform duration-500 group-hover:scale-[1.07]"
-          />
+          {/* A product saved without a picture would pass an empty src, which
+              next/image rejects outright — the tinted panel stands in instead. */}
+          {product.images?.[0] && (
+            <Image
+              src={product.images[0]}
+              alt={product.title}
+              fill
+              unoptimized
+              sizes="(max-width:640px) 50vw, (max-width:1024px) 33vw, 20vw"
+              priority={priority}
+              loading={priority ? undefined : "lazy"}
+              className="object-cover transition-transform duration-500 group-hover:scale-[1.07]"
+            />
+          )}
 
           {product.badge && (
             // Slight tilt so it reads as a stuck-on sticker, not a UI chip.

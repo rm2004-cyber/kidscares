@@ -41,10 +41,19 @@ export function SectionHeader({
 
 /** Horizontal scroll rail on small screens, grid from `lg` up. */
 export function ProductRail({ products }: { products: Product[] }) {
+  /*
+   * A grid at every size, never a side-scroller.
+   *
+   * A horizontal rail hides most of a row off-screen, which on a phone reads
+   * as "there is nothing else here" — people scroll past rather than sideways.
+   * Every product in the section is laid out here and wraps onto as many rows
+   * as it needs; "View all" is a shortcut to the full listing, not the only
+   * way to reach the rest of these.
+   */
   return (
-    <ul className="rail -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 lg:mx-0 lg:grid lg:grid-cols-5 lg:gap-5 lg:overflow-visible lg:px-0">
+    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-5 lg:gap-5">
       {products.map((p) => (
-        <li key={p._id} className="w-[46%] shrink-0 sm:w-[31%] lg:w-auto">
+        <li key={p._id}>
           <ProductCard product={p} />
         </li>
       ))}

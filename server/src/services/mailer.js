@@ -51,7 +51,7 @@ const C = {
    since a localhost/LAN URL would just render as broken image. */
 const LOGO_CID = "kidscares-logo";
 const here = path.dirname(fileURLToPath(import.meta.url));
-const LOGO_PATH = path.resolve(here, "../../../public/kidscareslogo-mark.png");
+const LOGO_PATH = path.resolve(here, "../../../public/kidscares-mark.png");
 const hasLogoFile = fs.existsSync(LOGO_PATH);
 const LOGO_SRC = env.brevo.logoUrl || (hasLogoFile ? `cid:${LOGO_CID}` : "");
 const LOGO_ATTACHMENT =

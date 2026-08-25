@@ -46,6 +46,23 @@ export const getCategory = asyncHandler(async (req, res) => {
   return ok(res, { category, children });
 });
 
+/* Admin sees inactive groups too, so they can be turned back on. */
+export const listAgeGroupsAdmin = asyncHandler(async (_req, res) =>
+  ok(res, await catalogService.listAgeGroups({ activeOnly: false })),
+);
+
+export const createAgeGroup = asyncHandler(async (req, res) =>
+  created(res, await catalogService.createAgeGroup(req.body)),
+);
+
+export const updateAgeGroup = asyncHandler(async (req, res) =>
+  ok(res, await catalogService.updateAgeGroup(req.params.id, req.body)),
+);
+
+export const deleteAgeGroup = asyncHandler(async (req, res) =>
+  ok(res, await catalogService.deleteAgeGroup(req.params.id)),
+);
+
 export const createCategory = asyncHandler(async (req, res) =>
   created(res, await catalogService.createCategory(req.body)),
 );

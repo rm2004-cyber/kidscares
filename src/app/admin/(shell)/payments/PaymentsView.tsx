@@ -368,9 +368,63 @@ export function PaymentsView() {
             copy="Once a customer pays online, every attempt shows up here."
           />
         ) : (
-          <TableWrap>
-            <table className="min-w-full">
-              <thead className="border-b border-line bg-cream/60">
+          <>
+            {/* Card per payment below sm. The amount is what this screen exists
+                to show, so it must never be the column that scrolls off. */}
+            <ul className="divide-y divide-line sm:hidden">
+              {rows.map((p) => {
+                const Icon = METHOD_ICON[p.method ?? ""] ?? Wallet;
+                return (
+                  <li key={p._id}>
+                    <button
+                      type="button"
+                      onClick={() => setDetail(p)}
+                      className="w-full px-4 py-3 text-left transition active:bg-cream"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-bold text-ink">
+                            {p.orderNo ?? "—"}
+                          </p>
+                          <p className="truncate text-[11px] text-ink-muted">
+                            {p.user?.name ?? p.email ?? "—"}
+                          </p>
+                        </div>
+                        <div className="shrink-0 text-right">
+                          <p className="text-sm font-extrabold text-ink">{inr(p.amount)}</p>
+                          {(p.refundedAmount ?? 0) > 0 && (
+                            <p className="text-[10px] font-semibold text-brand-600">
+                              −{inr(p.refundedAmount ?? 0)}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        <Badge tone={STATUS_TONE[p.status] ?? "neutral"}>
+                          {p.status.replace(/_/g, " ")}
+                        </Badge>
+                        <span className="inline-flex items-center gap-1 text-[11px] text-ink-muted">
+                          <Icon className="size-3" />
+                          {p.method ? p.method.toUpperCase() : "—"}
+                        </span>
+                        <span className="ml-auto text-[10px] text-ink-muted">
+                          {new Date(p.createdAt).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                          })}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            <div className="hidden sm:block">
+              <TableWrap>
+                <table className="min-w-full">
+                  <thead className="border-b border-line bg-cream/60">
                 <tr>
                   <Th>Payment</Th>
                   <Th>Customer</Th>
@@ -430,11 +484,13 @@ export function PaymentsView() {
                         )}
                       </Td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </TableWrap>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </div>
+          </>
         )}
 
         {pages > 1 && (

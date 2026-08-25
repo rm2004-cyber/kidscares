@@ -41,6 +41,16 @@ router.patch("/categories/:id", validate(s.categoryWriteSchema.partial()), catal
 router.delete("/categories/:id", requireRole("owner", "manager"), catalog.deleteCategory);
 router.post("/categories/refresh-counts", catalog.refreshCounts);
 
+/* ── age groups ── */
+router.get("/age-groups", catalog.listAgeGroupsAdmin);
+router.post("/age-groups", validate(s.ageGroupWriteSchema), catalog.createAgeGroup);
+router.patch(
+  "/age-groups/:id",
+  validate(s.ageGroupWriteSchema.partial()),
+  catalog.updateAgeGroup,
+);
+router.delete("/age-groups/:id", requireRole("owner", "manager"), catalog.deleteAgeGroup);
+
 router.get("/brands", catalog.listBrands);
 router.post("/brands", validate(s.brandWriteSchema), catalog.createBrand);
 router.patch("/brands/:id", validate(s.brandWriteSchema.partial()), catalog.updateBrand);

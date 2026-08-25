@@ -310,6 +310,12 @@ export const adminApi = {
   updateSettings: (payload) => patch("/admin/settings", payload),
 
   /* ── review moderation ── */
+  /* ── age groups ── */
+  listAgeGroups: () => get("/admin/age-groups"),
+  createAgeGroup: (body) => post("/admin/age-groups", body),
+  updateAgeGroup: (id, body) => patch(`/admin/age-groups/${id}`, body),
+  deleteAgeGroup: (id) => del(`/admin/age-groups/${id}`),
+
   /* ── fulfilment ── */
   /**
    * @param {string} id

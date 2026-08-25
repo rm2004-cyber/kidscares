@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import {
   Activity,
+  Baby,
   Bell,
   ExternalLink,
   Flame,
@@ -52,6 +53,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
       { href: "/admin/products", label: "Products", icon: Package },
       { href: "/admin/categories", label: "Categories", icon: Shapes },
       { href: "/admin/brands", label: "Brands", icon: Tag },
+      { href: "/admin/age-groups", label: "Age Groups", icon: Baby },
     ],
   },
   {

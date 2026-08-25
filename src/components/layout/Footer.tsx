@@ -163,9 +163,11 @@ function FooterCol({
 function FooterLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
     <li>
+      {/* Padded to a real finger-sized target. The text is only ~19px tall, and
+          a stack of links that close together is the classic footer mis-tap. */}
       <Link
         href={href}
-        className="text-sm text-ink-soft transition hover:text-brand-600"
+        className="-mx-1 inline-block min-h-11 px-1 py-2.5 text-sm leading-6 text-ink-soft transition hover:text-brand-600 sm:min-h-0 sm:py-1"
       >
         {children}
       </Link>

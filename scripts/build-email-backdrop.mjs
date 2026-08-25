@@ -51,12 +51,26 @@ const TILE = 180;
 const OPACITY = 0.24;
 const CREAM = "#fffaf6";
 
-const CHROME =
-  process.env.CHROME_PATH ??
-  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+/* Chrome lives somewhere different on every OS, and this script is run from
+   both Windows and macOS machines — so try the usual homes rather than
+   hard-coding one and breaking the other. CHROME_PATH always wins. */
+const CHROME_CANDIDATES = [
+  process.env.CHROME_PATH,
+  "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/usr/bin/google-chrome",
+  "/usr/bin/chromium",
+].filter(Boolean);
 
-if (!existsSync(CHROME)) {
-  console.error(`Chrome not found at ${CHROME}. Set CHROME_PATH and retry.`);
+const CHROME = CHROME_CANDIDATES.find((p) => existsSync(p));
+
+if (!CHROME) {
+  console.error(
+    "Chrome not found. Looked in:\n  " +
+      CHROME_CANDIDATES.join("\n  ") +
+      "\nSet CHROME_PATH to your Chrome binary and retry.",
+  );
   process.exit(1);
 }
 

@@ -544,6 +544,28 @@ export function ProductForm({
             }
             fallbackDescription={v.description}
             urlPath={`/product/${v.slug || "…"}`}
+            /* Labels, not slugs — the generator writes them into prose, and
+               "toys/puzzles" would read as nonsense in a sentence. */
+            suggestInput={{
+              title: v.title,
+              brand: v.brand,
+              description: v.description,
+              highlights: v.highlights,
+              safety: v.safety,
+              price: v.price,
+              mrp: v.mrp,
+              badge: v.badge,
+              colors: v.colors,
+              sizes: v.sizes,
+              slug: v.slug,
+              categoryLabel:
+                categories.find((c) => c.slug === v.categorySlug)?.name ?? "",
+              ageLabels: ageGroups
+                .filter((a) => v.ageSlugs.includes(a.slug))
+                .map((a) => a.label),
+              storeName: "KidsCares",
+              freeDeliveryOver: 999,
+            }}
           />
 
           {mode === "edit" && (

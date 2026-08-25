@@ -75,9 +75,9 @@ export function DealsSection({ deals }: { deals: Deal[] }) {
         </div>
       </div>
 
-      <ul className="rail -mx-1 flex gap-3 overflow-x-auto px-1 pb-1 sm:grid sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
+      <ul className="grid grid-cols-3 gap-3 pb-2 pt-2 sm:grid-cols-3 sm:gap-4 lg:grid-cols-6">
         {deals.map((d) => (
-          <li key={d._id} className="w-32 shrink-0 sm:w-auto">
+          <li key={d._id}>
             <Link
               href={d.href}
               className={`group flex h-full flex-col items-center gap-2 rounded-2xl ${d.accent} p-3 text-center transition-all duration-300 hover:-translate-y-1 hover:shadow-lg`}

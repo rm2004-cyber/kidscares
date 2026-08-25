@@ -7,9 +7,10 @@ import {
   Copy,
   Eye,
   Filter,
+  Image as ImageIcon,
+  PackageOpen,
   Pencil,
   Plus,
-  PackageOpen,
   Search,
   Star,
   Trash2,
@@ -29,6 +30,7 @@ import {
 } from "@/components/admin/ui";
 import type { Product } from "@/lib/types";
 import { adminApi, ApiError } from "@/utils/service";
+import { firstUrl } from "@/lib/media";
 import { discountPct, inr } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -254,9 +256,69 @@ export function ProductsView() {
             }
           />
         ) : (
-          <TableWrap>
-            <table className="min-w-full">
-              <thead className="border-b border-line bg-cream/60">
+          <>
+            {/* Below sm the table becomes one card per product. Seven columns
+                on a phone leaves nothing readable without side-scrolling. */}
+            <ul className="divide-y divide-line sm:hidden">
+              {rows.map((p) => (
+                <li key={p._id} className="flex items-start gap-3 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${p.title}`}
+                    checked={selected.includes(p._id)}
+                    onChange={(e) =>
+                      setSelected((prev) =>
+                        e.target.checked ? [...prev, p._id] : prev.filter((id) => id !== p._id),
+                      )
+                    }
+                    className="mt-1 size-4 shrink-0 accent-[var(--color-brand-500)]"
+                  />
+
+                  <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-cream">
+                    {firstUrl(p.images) ? (
+                      <Image src={firstUrl(p.images)} alt="" fill unoptimized sizes="48px" className="object-cover" />
+                    ) : (
+                      <ImageIcon className="absolute inset-0 m-auto size-4 text-ink-muted" />
+                    )}
+                  </span>
+
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-bold text-ink">{p.title}</p>
+                    <p className="truncate text-[11px] text-ink-muted">{p.brand}</p>
+
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="text-xs font-extrabold text-ink">{inr(p.price)}</span>
+                      {p.mrp > p.price && (
+                        <span className="text-[11px] text-ink-muted line-through">
+                          {inr(p.mrp)}
+                        </span>
+                      )}
+                      {p.inStock ? (
+                        <Badge tone="mint">In stock</Badge>
+                      ) : (
+                        <Badge tone="red">Out of stock</Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Preview and duplicate stay on the desktop table — a phone
+                      list needs the two actions people actually reach for. */}
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <IconAction label="Edit" href={`/admin/products/${p._id}`}>
+                      <Pencil className="size-4" />
+                    </IconAction>
+                    <IconAction label="Delete" danger>
+                      <Trash2 className="size-4" />
+                    </IconAction>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden sm:block">
+              <TableWrap>
+                <table className="min-w-full">
+                  <thead className="border-b border-line bg-cream/60">
                 <tr>
                   <Th className="w-10">
                     <input
@@ -303,9 +365,13 @@ export function ProductsView() {
                     <Td>
                       <div className="flex items-center gap-3">
                         <span className="relative size-11 shrink-0 overflow-hidden rounded-lg bg-cream">
-                          <Image src={p.images[0]} alt="" fill unoptimized sizes="44px" className="object-cover" />
+                          {firstUrl(p.images) ? (
+                            <Image src={firstUrl(p.images)} alt="" fill unoptimized sizes="44px" className="object-cover" />
+                          ) : (
+                            <ImageIcon className="absolute inset-0 m-auto size-4 text-ink-muted" />
+                          )}
                         </span>
-                        <div className="min-w-0 max-w-[240px]">
+                        <div className="min-w-0 max-w-[150px] lg:max-w-[240px]">
                           <p className="truncate text-xs font-bold text-ink">{p.title}</p>
                           <p className="truncate text-[11px] text-ink-muted">{p.brand}</p>
                           {/* Price is shown inline on small screens where the
@@ -368,10 +434,12 @@ export function ProductsView() {
                       </div>
                     </Td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </div>
+          </>
         )}
 
         {total > PAGE_SIZE && (

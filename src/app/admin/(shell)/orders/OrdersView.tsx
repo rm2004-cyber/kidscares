@@ -179,9 +179,54 @@ export function OrdersView() {
         {filtered.length === 0 ? (
           <EmptyState icon={ReceiptText} title="No orders match" copy="Try a different filter." />
         ) : (
-          <TableWrap>
-            <table className="min-w-full">
-              <thead className="border-b border-line bg-cream/60">
+          <>
+            {/* Below sm the table becomes a card per order. A five-column table
+                on a phone means side-scrolling to read the amount, which is
+                the one number an admin scans the list for. */}
+            <ul className="divide-y divide-line sm:hidden">
+              {filtered.map((o) => (
+                <li key={o._id}>
+                  <button
+                    type="button"
+                    onClick={() => setOpen(o)}
+                    className="w-full px-4 py-3 text-left transition active:bg-cream"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold text-ink">{o.orderNo}</p>
+                        <p className="truncate text-[11px] text-ink-muted">
+                          {o.user?.name ?? "—"}
+                          {o.address?.city ? ` · ${o.address.city}` : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-extrabold text-ink">
+                        {inr(o.total)}
+                      </p>
+                    </div>
+
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      <StatusPill status={o.status} />
+                      <Badge tone={o.payment?.method === "cod" ? "sun" : "mint"}>
+                        {o.payment?.method === "cod" ? "COD" : "Prepaid"}
+                      </Badge>
+                      <span className="ml-auto text-[10px] text-ink-muted">
+                        {new Date(o.createdAt).toLocaleDateString("en-IN", {
+                          day: "numeric",
+                          month: "short",
+                        })}
+                        {" · "}
+                        {o.items.length} item{o.items.length === 1 ? "" : "s"}
+                      </span>
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden sm:block">
+              <TableWrap>
+                <table className="min-w-full">
+                  <thead className="border-b border-line bg-cream/60">
                 <tr>
                   <Th>Order</Th>
                   <Th>Customer</Th>
@@ -224,10 +269,12 @@ export function OrdersView() {
                     </Td>
                     <Td className="text-right font-bold">{inr(o.total)}</Td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </div>
+          </>
         )}
       </Card>
 

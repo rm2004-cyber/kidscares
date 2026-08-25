@@ -23,6 +23,11 @@ export type AgeGroup = {
   label: string;
   minMonths: number;
   maxMonths: number;
+  glyph?: string;
+  order?: number;
+  isActive?: boolean;
+  /** Optional photo for the age tile; falls back to a glyph when absent. */
+  image?: { url?: string; publicId?: string };
 };
 
 export type Category = {

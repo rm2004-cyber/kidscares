@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import type { AgeGroup, Category } from "@/lib/types";
+import { RotatingPlaceholder } from "./RotatingPlaceholder";
 import { useCart } from "@/store/useCart";
 import { useWishlist } from "@/store/useWishlist";
 import { useHydrated } from "@/lib/useHydrated";
@@ -39,6 +40,9 @@ type Props = {
   allCategories: Category[];
   ageGroups: AgeGroup[];
 };
+
+/* Shown when the catalogue has not loaded yet, so the bar is never blank. */
+const FALLBACK_TERMS = ["clothes", "footwear", "soft toys", "prams", "daily needs"];
 
 export function Header({ topCategories, allCategories, ageGroups }: Props) {
   const router = useRouter();
@@ -99,6 +103,15 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
     if (closeTimer.current) clearTimeout(closeTimer.current);
   };
 
+  /* Real category names keep the hints honest — a hard-coded list would go on
+     advertising an aisle long after it was removed. */
+  const searchTerms = useMemo(() => {
+    const names = (topCategories.length ? topCategories : allCategories)
+      .map((c) => c.name?.toLowerCase())
+      .filter((n): n is string => Boolean(n));
+    return names.length >= 2 ? names.slice(0, 6) : FALLBACK_TERMS;
+  }, [topCategories, allCategories]);
+
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const q = query.trim();
@@ -155,7 +168,7 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
           <Menu className="size-5" />
         </button>
 
-        <Logo size="lg" priority className="!h-10 sm:!h-14" />
+        <Logo size="lg" priority reload className="!h-10 sm:!h-11 lg:!h-12" />
 
         <div className="relative hidden flex-1 md:block">
           <form onSubmit={submitSearch} className="relative flex items-center" role="search">
@@ -165,10 +178,15 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => suggestions.length && setSuggestOpen(true)}
               onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
-              placeholder="Search for prams, rompers, soft toys…"
+              placeholder=""
               aria-label="Search products"
               aria-expanded={suggestOpen}
               className="h-11 w-full rounded-full border border-line bg-cream pl-11 pr-4 text-sm outline-none transition focus:border-brand-300 focus:bg-white"
+            />
+            <RotatingPlaceholder
+              terms={searchTerms}
+              hidden={query.length > 0}
+              className="left-11 right-4"
             />
           </form>
 
@@ -337,9 +355,14 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search KidsCares…"
+            placeholder=""
             aria-label="Search products"
             className="h-10 w-full rounded-full border border-line bg-cream pl-11 pr-4 text-sm outline-none focus:border-brand-300 focus:bg-white"
+          />
+          <RotatingPlaceholder
+            terms={searchTerms}
+            hidden={query.length > 0}
+            className="left-11 right-4"
           />
         </div>
       </form>

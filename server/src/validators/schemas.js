@@ -293,6 +293,22 @@ export const bookShipmentSchema = z.object({
   courierId: z.coerce.number().int().positive().optional(),
 });
 
+export const ageGroupWriteSchema = z.object({
+  slug: z.string().trim().min(1).max(60).optional(),
+  label: z.string().trim().min(1, "Give the group a label").max(60),
+  minMonths: z.coerce.number().int().min(0).max(300),
+  maxMonths: z.coerce.number().int().min(0).max(300),
+  glyph: z.string().trim().max(40).optional(),
+  order: z.coerce.number().int().min(0).max(999).optional(),
+  isActive: z.boolean().optional(),
+  image: z
+    .object({
+      url: z.string().trim().url("Upload an image first").optional().or(z.literal("")),
+      publicId: z.string().trim().optional(),
+    })
+    .optional(),
+});
+
 export const returnCompleteSchema = z.object({
   restock: z.boolean().optional().default(true),
   /** Omitted means "refund the full value of the returned lines". */

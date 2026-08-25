@@ -104,9 +104,48 @@ export function CustomersView() {
             copy="Everyone who creates an account will show up here."
           />
         ) : (
-          <TableWrap>
-            <table className="min-w-full">
-              <thead className="border-b border-line bg-cream/60">
+          <>
+            {/* One card per customer below sm — the email is the thing an admin
+                looks people up by, and it is the first casualty of a squeezed
+                table column. */}
+            <ul className="divide-y divide-line sm:hidden">
+              {rows.map((c) => (
+                <li key={c._id} className="flex items-start gap-2.5 px-4 py-3">
+                  <span className="grid size-9 shrink-0 place-items-center rounded-full bg-brand-100 text-[11px] font-extrabold text-brand-700">
+                    {c.name
+                      .split(" ")
+                      .map((n) => n[0])
+                      .join("")
+                      .slice(0, 2)
+                      .toUpperCase()}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-xs font-bold text-ink">{c.name}</p>
+                    <p className="truncate text-[11px] text-ink-muted">{c.email}</p>
+                    <p className="text-[11px] text-ink-muted">
+                      {c.phone ?? "No phone"}
+                      {c.addresses?.[0]?.city ? ` · ${c.addresses[0].city}` : ""}
+                    </p>
+                    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                      <Badge tone={c.status === "active" ? "mint" : "red"}>{c.status}</Badge>
+                      {c.emailVerified && <Badge tone="sky">Verified</Badge>}
+                      <span className="ml-auto text-[10px] text-ink-muted">
+                        {new Date(c.createdAt).toLocaleDateString("en-IN", {
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+
+            <div className="hidden sm:block">
+              <TableWrap>
+                <table className="min-w-full">
+                  <thead className="border-b border-line bg-cream/60">
                 <tr>
                   <Th>Customer</Th>
                   <Th className="hidden md:table-cell">Contact</Th>
@@ -161,10 +200,12 @@ export function CustomersView() {
                       })}
                     </Td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </TableWrap>
+                    ))}
+                  </tbody>
+                </table>
+              </TableWrap>
+            </div>
+          </>
         )}
 
         {pages > 1 && (
