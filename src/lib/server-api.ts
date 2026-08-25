@@ -92,4 +92,9 @@ export const serverApi = {
   deals: () => serverGet<Record<string, unknown>[]>("/deals", { revalidate: 60, tags: ["deals"] }),
   coupons: () => serverGet<Record<string, unknown>[]>("/coupons", { revalidate: 60 }),
   settings: () => serverGet<Record<string, unknown>>("/settings", { revalidate: 60 }),
+  homeSections: () =>
+    serverGet<Record<string, unknown>[]>("/home-sections", {
+      revalidate: 60,
+      tags: ["home-sections", "products"],
+    }),
 };

@@ -252,9 +252,29 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
             <span className="hidden lg:inline">Account</span>
           </Link>
 
+          {/*
+            Deals only shows below md, where it fills the gap the two icons
+            below leave behind. The desktop category bar already carries a
+            "Today's Deals" link, so showing it here too would be the same
+            duplication this replaced.
+          */}
+          <Link
+            href="/deals"
+            className="flex items-center gap-1.5 rounded-full px-2.5 py-2 text-sm font-bold text-brand-600 transition hover:bg-brand-50 md:hidden"
+            aria-label="Today's deals"
+          >
+            <Flame className="size-5" />
+            <span>Deals</span>
+          </Link>
+
+          {/*
+            Wishlist and cart live in the bottom tab bar on mobile, badges and
+            all, so repeating them here bought nothing and crowded the logo.
+            From md up there is no bottom bar, so they come back.
+          */}
           <Link
             href="/wishlist"
-            className="relative grid size-10 place-items-center rounded-full transition hover:bg-cream"
+            className="relative hidden size-10 place-items-center rounded-full transition hover:bg-cream md:grid"
             aria-label="Wishlist"
           >
             <Heart className="size-5" />
@@ -264,7 +284,7 @@ export function Header({ topCategories, allCategories, ageGroups }: Props) {
           <button
             type="button"
             onClick={openCart}
-            className="relative grid size-10 place-items-center rounded-full transition hover:bg-cream"
+            className="relative hidden size-10 place-items-center rounded-full transition hover:bg-cream md:grid"
             aria-label={`Cart, ${mounted ? count : 0} items`}
           >
             <ShoppingBag className="size-5" />

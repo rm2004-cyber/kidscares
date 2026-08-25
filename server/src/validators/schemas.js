@@ -131,6 +131,8 @@ const productBaseSchema = z.object({
   brand: z.string().trim().min(1, "Pick a brand"),
   categorySlug: z.string().trim().min(1, "Pick a category"),
   ageSlugs: z.array(z.string()).optional().default([]),
+  /* Home rows this product is pinned to. Ids, so an empty array clears them. */
+  sections: z.array(z.string().regex(/^[0-9a-fA-F]{24}$/, "Bad section id")).optional(),
   images: z
     .array(z.object({ url: z.string(), publicId: z.string().optional(), alt: z.string().optional() }))
     .min(1, "Add at least one image"),
@@ -291,6 +293,24 @@ export const bookShipmentSchema = z.object({
   /* Optional: omitting it lets Shiprocket auto-assign, which is the fallback
      when every listed courier fails. */
   courierId: z.coerce.number().int().positive().optional(),
+});
+
+export const homeSectionWriteSchema = z.object({
+  title: z.string().trim().min(1, "Give the section a title").max(60),
+  subtitle: z.string().trim().max(160).optional().default(""),
+  viewAllHref: z.string().trim().max(200).optional().default(""),
+  icon: z.string().trim().max(40).optional().default(""),
+  iconClassName: z.string().trim().max(120).optional().default(""),
+  source: z.enum(["manual", "category", "badge", "newest"]).default("manual"),
+  categorySlug: z.string().trim().max(80).optional().default(""),
+  badge: z.enum(["new", "bestseller", "sale", "limited", ""]).optional().default(""),
+  sortBy: z
+    .enum(["popular", "new", "rating", "price-asc", "price-desc"])
+    .optional()
+    .default("popular"),
+  limit: z.coerce.number().int().min(1).max(30).optional().default(10),
+  order: z.coerce.number().int().min(0).max(999).optional().default(0),
+  isActive: z.boolean().optional(),
 });
 
 export const ageGroupWriteSchema = z.object({

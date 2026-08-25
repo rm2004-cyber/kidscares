@@ -310,6 +310,13 @@ export const adminApi = {
   updateSettings: (payload) => patch("/admin/settings", payload),
 
   /* ── review moderation ── */
+  /* ── home sections ── */
+  listHomeSections: () => get("/admin/home-sections"),
+  manualHomeSections: () => get("/admin/home-sections/manual"),
+  createHomeSection: (body) => post("/admin/home-sections", body),
+  updateHomeSection: (id, body) => patch(`/admin/home-sections/${id}`, body),
+  deleteHomeSection: (id) => del(`/admin/home-sections/${id}`),
+
   /* ── age groups ── */
   listAgeGroups: () => get("/admin/age-groups"),
   createAgeGroup: (body) => post("/admin/age-groups", body),

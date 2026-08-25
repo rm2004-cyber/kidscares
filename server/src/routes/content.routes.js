@@ -1,8 +1,12 @@
 import { Router } from "express";
+import * as homeSections from "../controllers/homeSection.controller.js";
 import * as c from "../controllers/content.controller.js";
 import * as analytics from "../controllers/analytics.controller.js";
 
 const router = Router();
+
+/* The home page's product rows, resolved server-side. */
+router.get("/home-sections", homeSections.publicSections);
 
 router.get("/banners", c.getBanners);
 router.get("/deals", c.getDeals);

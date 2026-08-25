@@ -4,6 +4,7 @@ import type {
   Brand,
   Category,
   Deal,
+  HomeSection,
   Product,
 } from "./types";
 import { serverApi } from "./server-api";
@@ -376,6 +377,22 @@ export async function getDeals(): Promise<Deal[]> {
 export async function getBrands(): Promise<Brand[]> {
   const live = await serverApi.brands();
   return live?.length ? (live as unknown[]).map(normaliseBrand) : brands;
+}
+
+/**
+ * Home page rows, resolved by the API.
+ *
+ * Returns an empty array when nothing is configured, which the page treats as
+ * "fall back to the built-in rows" — so a fresh database still renders a full
+ * home page instead of a bare one.
+ */
+export async function getHomeSections(): Promise<HomeSection[]> {
+  const live = await serverApi.homeSections();
+  if (!live?.length) return [];
+  return (live as unknown as HomeSection[]).map((s) => ({
+    ...s,
+    products: (s.products ?? []).map(normaliseProduct),
+  }));
 }
 
 export async function getAgeGroups(): Promise<AgeGroup[]> {

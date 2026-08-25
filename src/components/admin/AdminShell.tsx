@@ -12,6 +12,7 @@ import {
   Flame,
   Image as ImageIcon,
   LayoutDashboard,
+  LayoutList,
   LogOut,
   Menu,
   MessageSquare,
@@ -59,6 +60,7 @@ const NAV: { group: string; items: NavItem[] }[] = [
   {
     group: "Merchandising",
     items: [
+      { href: "/admin/home-sections", label: "Home Sections", icon: LayoutList },
       { href: "/admin/banners", label: "Advertisements", icon: ImageIcon },
       { href: "/admin/deals", label: "Deals & Countdown", icon: Flame },
     ],

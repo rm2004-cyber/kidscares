@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { Suspense } from "react";
+import { Fragment, Suspense } from "react";
 import {
   ArrowRight,
   Baby,
@@ -13,11 +13,29 @@ import {
   Umbrella,
 } from "lucide-react";
 
+/**
+ * Icons a section may name.
+ *
+ * Kept as an explicit map rather than a dynamic lookup so the bundle only
+ * carries icons this page actually uses — and an unknown name falls back
+ * instead of rendering nothing.
+ */
+const SECTION_ICONS: Record<string, typeof Star> = {
+  Star,
+  Sparkles,
+  ToyBrick,
+  Baby,
+  Shirt,
+  ShoppingBag,
+  Tag,
+  Umbrella,
+};
+
 import { HeroCarousel } from "@/components/home/HeroCarousel";
 import { AgeStrip, CategoryRail } from "@/components/home/CategoryRail";
 import { DealsSection } from "@/components/home/DealsSection";
 import { ProductRail, SectionHeader } from "@/components/home/Section";
-import { RailSkeleton, CategoryRailSkeleton, HeroSkeleton } from "@/components/ui/Skeletons";
+import { CategoryRailSkeleton, HeroSkeleton } from "@/components/ui/Skeletons";
 import { JsonLd } from "@/components/JsonLd";
 import { GlyphBadge } from "@/components/ui/Glyph";
 import { itemListLd } from "@/lib/seo";
@@ -26,9 +44,10 @@ import {
   getBanners,
   getBrands,
   getDeals,
-  getProducts,
+  getHomeSections,
   getTopCategories,
 } from "@/lib/data";
+import type { HomeSection } from "@/lib/types";
 
 export const metadata = {
   // Home overrides the title template — it should not read "Home | KidsCares".
@@ -49,16 +68,15 @@ export default async function HomePage() {
     getBrands(),
   ]);
 
-  const [bestsellers, newArrivals, toys, essentials] = await Promise.all([
-    getProducts({ badge: "bestseller" }),
-    getProducts({ sort: "new" }),
-    getProducts({ category: "toys", sort: "rating" }),
-    getProducts({ category: "daily-needs" }),
-  ]);
+  const sections = await getHomeSections();
+
+  /* Structured data still needs a product list; the first row is the closest
+     equivalent of what used to be hard-coded as the bestsellers. */
+  const featured = sections[0]?.products ?? [];
 
   return (
     <>
-      <JsonLd data={itemListLd(bestsellers, "KidsCares Bestsellers")} />
+      <JsonLd data={itemListLd(featured, "KidsCares Bestsellers")} />
 
       <div className="mx-auto max-w-7xl space-y-14 px-4 py-6 sm:py-8">
         <Suspense fallback={<HeroSkeleton />}>
@@ -88,57 +106,28 @@ export default async function HomePage() {
 
         <DealsSection deals={deals} />
 
-        <section aria-labelledby="best-heading">
-          <SectionHeader
-            title="Parent Favourites"
-            subtitle="The products reordered most this month."
-            href="/search?sort=popular"
-            icon={Star} iconClassName="size-6 fill-sun-400 text-sun-400"
-          />
-          <Suspense fallback={<RailSkeleton />}>
-            <ProductRail products={bestsellers.slice(0, 10)} />
-          </Suspense>
-        </section>
+        {/*
+          Rows come from the database so they can be renamed, reordered and
+          repointed from the admin panel. PromoStrip and BrandStrip stay pinned
+          between them — they are page furniture, not merchandising.
+        */}
+        {sections.map((section: HomeSection, i: number) => (
+          <Fragment key={section._id}>
+            <section aria-label={section.title}>
+              <SectionHeader
+                title={section.title}
+                subtitle={section.subtitle}
+                href={section.viewAllHref || undefined}
+                icon={SECTION_ICONS[section.icon ?? ""] ?? Sparkles}
+                iconClassName={section.iconClassName || "size-6 text-brand-500"}
+              />
+              <ProductRail products={section.products} />
+            </section>
 
-        <PromoStrip />
-
-        <section aria-labelledby="new-heading">
-          <SectionHeader
-            title="Just Landed"
-            subtitle="Fresh arrivals, added this week."
-            href="/search?sort=new"
-            icon={Sparkles} iconClassName="size-6 text-grape-500"
-          />
-          <Suspense fallback={<RailSkeleton />}>
-            <ProductRail products={newArrivals.slice(0, 10)} />
-          </Suspense>
-        </section>
-
-        <section aria-labelledby="toys-heading">
-          <SectionHeader
-            title="Playroom Picks"
-            subtitle="Learning toys, puzzles and pretend play — all age-graded."
-            href="/category/toys"
-            icon={ToyBrick} iconClassName="size-6 text-sun-500"
-          />
-          <Suspense fallback={<RailSkeleton />}>
-            <ProductRail products={toys.slice(0, 10)} />
-          </Suspense>
-        </section>
-
-        <BrandStrip brands={brands} />
-
-        <section aria-labelledby="essentials-heading">
-          <SectionHeader
-            title="Daily Essentials"
-            subtitle="Diapers, feeding and bath — the restock run, sorted."
-            href="/category/daily-needs"
-            icon={Baby} iconClassName="size-6 text-mint-500"
-          />
-          <Suspense fallback={<RailSkeleton />}>
-            <ProductRail products={essentials.slice(0, 10)} />
-          </Suspense>
-        </section>
+            {i === 0 && <PromoStrip />}
+            {i === 1 && <BrandStrip brands={brands} />}
+          </Fragment>
+        ))}
 
         <TrustBand />
       </div>

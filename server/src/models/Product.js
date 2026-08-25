@@ -25,6 +25,17 @@ const productSchema = new mongoose.Schema(
     price: { type: Number, required: true, min: 0, index: true },
     mrp: { type: Number, required: true, min: 0 },
 
+    /**
+     * Home rows this product is pinned to, when the row is curated by hand.
+     *
+     * An array rather than a second use of `badge`: a product can legitimately
+     * belong on both "Parent Favourites" and a sale row at once, and `badge`
+     * has to stay a single value because it draws one sticker on the card.
+     */
+    sections: [
+      { type: mongoose.Schema.Types.ObjectId, ref: "HomeSection", index: true },
+    ],
+
     badge: {
       type: String,
       enum: ["new", "bestseller", "sale", "limited", ""],

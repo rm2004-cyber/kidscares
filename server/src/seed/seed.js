@@ -11,6 +11,7 @@ import { Banner } from "../models/Banner.js";
 import { Deal } from "../models/Deal.js";
 import { Coupon } from "../models/Coupon.js";
 import { Settings } from "../models/Settings.js";
+import { HomeSection } from "../models/HomeSection.js";
 import { refreshCategoryCounts } from "../services/catalog.service.js";
 
 /**
@@ -268,11 +269,68 @@ async function run() {
     );
   }
 
+  /* The four rows the home page used to hard-code. Upserted by title so a
+     re-seed never duplicates them or overwrites an admin's edits. */
+  const HOME_SECTIONS = [
+    {
+      title: "Parent Favourites",
+      subtitle: "The products reordered most this month.",
+      viewAllHref: "/search?sort=popular",
+      icon: "Star",
+      iconClassName: "size-6 fill-sun-400 text-sun-400",
+      source: "badge",
+      badge: "bestseller",
+      sortBy: "popular",
+      order: 0,
+    },
+    {
+      title: "Just Landed",
+      subtitle: "Fresh arrivals, added this week.",
+      viewAllHref: "/search?sort=new",
+      icon: "Sparkles",
+      iconClassName: "size-6 text-grape-500",
+      source: "newest",
+      sortBy: "new",
+      order: 1,
+    },
+    {
+      title: "Playroom Picks",
+      subtitle: "Learning toys, puzzles and pretend play — all age-graded.",
+      viewAllHref: "/category/toys",
+      icon: "ToyBrick",
+      iconClassName: "size-6 text-sun-500",
+      source: "category",
+      categorySlug: "toys",
+      sortBy: "rating",
+      order: 2,
+    },
+    {
+      title: "Daily Essentials",
+      subtitle: "Diapers, feeding and bath — the restock run, sorted.",
+      viewAllHref: "/category/daily-needs",
+      icon: "Baby",
+      iconClassName: "size-6 text-mint-500",
+      source: "category",
+      categorySlug: "daily-needs",
+      sortBy: "popular",
+      order: 3,
+    },
+  ];
+
+  for (const section of HOME_SECTIONS) {
+    await HomeSection.updateOne(
+      { title: section.title },
+      { $setOnInsert: section },
+      { upsert: true },
+    );
+  }
+
   await Settings.getSite();
   const counts = await refreshCategoryCounts();
 
   logger.success(
-    `Seed complete — ${PRODUCTS.length} products, ${TOP_CATEGORIES.length + SUB_CATEGORIES.length} categories, ${counts.updated} counters refreshed`,
+    `Seed complete — ${PRODUCTS.length} products, ${TOP_CATEGORIES.length + SUB_CATEGORIES.length} categories, ` +
+      `${HOME_SECTIONS.length} home sections, ${counts.updated} counters refreshed`,
   );
 
   await disconnectDB();

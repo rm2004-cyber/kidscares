@@ -30,6 +30,18 @@ export type AgeGroup = {
   image?: { url?: string; publicId?: string };
 };
 
+/** A configurable product row on the home page. */
+export type HomeSection = {
+  _id: string;
+  title: string;
+  subtitle?: string;
+  viewAllHref?: string;
+  icon?: string;
+  iconClassName?: string;
+  source: "manual" | "category" | "badge" | "newest";
+  products: Product[];
+};
+
 export type Category = {
   _id: string;
   slug: string;
@@ -89,6 +101,8 @@ export type Product = {
   returnPolicyNote?: string;
   createdAt: string;
   seo?: Partial<Seo>;
+  /** Ids of hand-picked home sections this product is pinned to. */
+  sections?: string[];
 };
 
 export type Banner = {

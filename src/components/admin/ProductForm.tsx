@@ -30,6 +30,7 @@ import { SeoEditor, type SeoValue } from "./SeoEditor";
 import { discountPct, inr } from "@/lib/format";
 import { slugify, type ProductFormValue } from "@/lib/admin/productForm";
 import { adminApi, ApiError } from "@/utils/service";
+import { cn } from "@/lib/utils";
 
 export function ProductForm({
   initial,
@@ -46,6 +47,8 @@ export function ProductForm({
   const [brands, setBrands] = useState<string[]>([]);
   const [categories, setCategories] = useState<{ slug: string; name: string }[]>([]);
   const [ageGroups, setAgeGroups] = useState<{ slug: string; label: string }[]>([]);
+  /* Only hand-picked rows can be assigned here — the others fill themselves. */
+  const [homeSections, setHomeSections] = useState<{ _id: string; title: string }[]>([]);
   const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -70,6 +73,11 @@ export function ProductForm({
         );
         setCategories(leaves.map((x) => ({ slug: x.slug, name: x.name })));
       })
+      .catch(() => {});
+
+    adminApi
+      .manualHomeSections()
+      .then((list) => setHomeSections((list ?? []) as { _id: string; title: string }[]))
       .catch(() => {});
 
     fetch("/api/backend/age-groups")
@@ -124,6 +132,7 @@ export function ProductForm({
     const payload = {
       ...v,
       badge: v.badge || undefined,
+      sections: v.sections,
       // Already MediaItem[] — publicId travels with the URL so the asset can
       // be deleted from Cloudinary if the product is removed later.
       images: v.images,
@@ -488,6 +497,56 @@ export function ProductForm({
                 <option value="limited">Limited</option>
               </Select>
             </Field>
+
+            {/*
+              Separate from Badge on purpose: the badge draws one ribbon, so it
+              can only ever be one value. Section membership is a list, which is
+              what lets a product sit in both a bestseller row and a sale row.
+            */}
+            {homeSections.length > 0 && (
+              <div className="mt-4">
+                <p className="mb-1 text-xs font-bold text-ink">Home sections</p>
+                <p className="mb-2 text-[11px] text-ink-muted">
+                  Hand-picked rows this product appears in. Tick as many as apply.
+                </p>
+                <div className="space-y-1.5">
+                  {homeSections.map((sec) => {
+                    const on = v.sections.includes(sec._id);
+                    return (
+                      <button
+                        key={sec._id}
+                        type="button"
+                        onClick={() =>
+                          set(
+                            "sections",
+                            on
+                              ? v.sections.filter((id) => id !== sec._id)
+                              : [...v.sections, sec._id],
+                          )
+                        }
+                        aria-pressed={on}
+                        className={cn(
+                          "flex w-full items-center gap-2 rounded-xl border-2 px-3 py-2 text-left text-xs font-semibold transition",
+                          on
+                            ? "border-brand-500 bg-brand-50 text-brand-700"
+                            : "border-line text-ink-soft hover:border-brand-300",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "grid size-4 shrink-0 place-items-center rounded border-2",
+                            on ? "border-brand-500 bg-brand-500" : "border-line",
+                          )}
+                        >
+                          {on && <Check className="size-2.5 text-white" strokeWidth={4} />}
+                        </span>
+                        {sec.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 rounded-xl bg-cream p-3">
               <p className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted">

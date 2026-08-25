@@ -9,6 +9,7 @@ import * as analytics from "../controllers/analytics.controller.js";
 import * as upload from "../controllers/upload.controller.js";
 import * as payments from "../controllers/payment.controller.js";
 import * as fulfil from "../controllers/fulfilment.controller.js";
+import * as sections from "../controllers/homeSection.controller.js";
 import * as support from "../controllers/support.controller.js";
 import * as shipments from "../controllers/shipment.controller.js";
 import * as reviews from "../controllers/review.controller.js";
@@ -40,6 +41,17 @@ router.post("/categories", validate(s.categoryWriteSchema), catalog.createCatego
 router.patch("/categories/:id", validate(s.categoryWriteSchema.partial()), catalog.updateCategory);
 router.delete("/categories/:id", requireRole("owner", "manager"), catalog.deleteCategory);
 router.post("/categories/refresh-counts", catalog.refreshCounts);
+
+/* ── home sections ── */
+router.get("/home-sections", sections.list);
+router.get("/home-sections/manual", sections.manual);
+router.post("/home-sections", validate(s.homeSectionWriteSchema), sections.create);
+router.patch(
+  "/home-sections/:id",
+  validate(s.homeSectionWriteSchema.partial()),
+  sections.update,
+);
+router.delete("/home-sections/:id", requireRole("owner", "manager"), sections.remove);
 
 /* ── age groups ── */
 router.get("/age-groups", catalog.listAgeGroupsAdmin);
