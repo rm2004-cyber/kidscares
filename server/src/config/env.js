@@ -16,9 +16,16 @@ export const env = {
      Falls back to PORT for a standalone API service, then to a local default. */
   port: num(process.env.API_PORT ?? process.env.PORT, 5001),
 
-  corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:3000")
-    .split(",")
-    .map((s) => s.trim())
+  corsOrigins: [
+    ...(process.env.CORS_ORIGINS
+      ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim())
+      : ["http://localhost:3000", "http://127.0.0.1:3000"]),
+    /* Render injects the public URL of each instance; browsers always send an
+       Origin header, so a missing allow-list entry 500s every storefront call. */
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.PUBLIC_SITE_URL,
+  ]
+    .map((s) => s?.trim().replace(/\/$/, ""))
     .filter(Boolean),
 
   mongoUri: process.env.MONGODB_URI ?? "mongodb://127.0.0.1:27017/kidscares",
