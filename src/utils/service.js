@@ -15,8 +15,10 @@
 const ENV_API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
 const IS_SERVER = typeof window === "undefined";
 
+const API_PORT = process.env.API_PORT ?? process.env.PORT ?? "5001";
+
 /** Origin without the /api suffix — what socket.io connects to. */
-export const SOCKET_URL = ENV_API ?? "http://127.0.0.1:5001";
+export const SOCKET_URL = ENV_API ?? `http://127.0.0.1:${API_PORT}`;
 
 /**
  * Base for every REST call.

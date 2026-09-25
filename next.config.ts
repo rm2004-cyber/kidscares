@@ -15,7 +15,9 @@ const nextConfig: NextConfig = {
      Node server rather than being called cross-origin. Keeps cookies
      same-origin in production and removes the CORS round trip. */
   async rewrites() {
-    const api = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:5001";
+    const api =
+      process.env.NEXT_PUBLIC_API_URL ??
+      `http://127.0.0.1:${process.env.API_PORT ?? process.env.PORT ?? "5001"}`;
     return [{ source: "/api/backend/:path*", destination: `${api}/api/:path*` }];
   },
 };

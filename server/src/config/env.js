@@ -12,7 +12,9 @@ const num = (v, fallback) => (v === undefined || v === "" ? fallback : Number(v)
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? "development",
   isProd: process.env.NODE_ENV === "production",
-  port: num(process.env.PORT, 5000),
+  /* API_PORT is the internal API port (used by the Next rewrite and wait-on).
+     Falls back to PORT for a standalone API service, then to a local default. */
+  port: num(process.env.API_PORT ?? process.env.PORT, 5001),
 
   corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:3000")
     .split(",")
