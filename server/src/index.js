@@ -19,7 +19,11 @@ async function main() {
   const server = http.createServer(app);
   const io = initSockets(server);
 
-  server.listen(env.port, () => {
+  /* Bind to loopback so Render only ever detects the Next public port. If the
+     API were on 0.0.0.0, placeholder-image generation and health probes can
+     make Render latch onto the internal API port instead of the web app. The
+     Next rewrite (same container) reaches this over 127.0.0.1 anyway. */
+  server.listen(env.port, "127.0.0.1", () => {
     logger.success(`API listening on http://localhost:${env.port}/api`);
   });
 
