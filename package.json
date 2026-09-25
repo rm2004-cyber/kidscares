@@ -5,11 +5,11 @@
   "scripts": {
     "dev": "concurrently -k -n API,WEB -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "npm --prefix server run dev",
-    "dev:web": "wait-on -t 60000 http-get://127.0.0.1:5000/api/health && next dev",
+    "dev:web": "wait-on -t 60000 http-get://127.0.0.1:5001/api/health && next dev",
     "build": "next build",
     "start": "concurrently -k -n API,WEB -c magenta,cyan \"npm:start:api\" \"npm:start:web\"",
     "start:api": "npm --prefix server start",
-    "start:web": "wait-on -t 60000 http-get://127.0.0.1:5000/api/health && next start",
+    "start:web": "wait-on -t 60000 http-get://127.0.0.1:5001/api/health && next start",
     "server": "npm --prefix server start",
     "build:email-backdrop": "node --experimental-strip-types scripts/build-email-backdrop.mjs",
     "seed": "npm --prefix server run seed",

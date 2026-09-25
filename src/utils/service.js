@@ -16,7 +16,7 @@ const ENV_API = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
 const IS_SERVER = typeof window === "undefined";
 
 /** Origin without the /api suffix — what socket.io connects to. */
-export const SOCKET_URL = ENV_API ?? "http://127.0.0.1:5000";
+export const SOCKET_URL = ENV_API ?? "http://127.0.0.1:5001";
 
 /**
  * Base for every REST call.
